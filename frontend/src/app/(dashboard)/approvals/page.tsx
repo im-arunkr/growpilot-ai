@@ -1,6 +1,8 @@
 
 "use client";
-
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Play } from "lucide-react";
+import { apiClient } from "@/lib/api/client";
 import { useMemo, useState } from "react";
 import {
     AlertTriangle,
@@ -540,6 +542,530 @@ function ApprovalCard({
     );
 }
 
+type ApprovedRunAction = {
+    id: string;
+    run_id: string;
+    business_id: string;
+    status: string;
+};
+
+type ApprovedRunsResponse = {
+    success: boolean;
+    data: ApprovedRunAction[];
+    total: number;
+};
+
+
+type GoalEvaluation = {
+    success: boolean;
+    evaluationId?: string;
+    evaluationStatus?: string;
+    metric?: string;
+    baseline?: number | null;
+    actual?: number | null;
+    target?: number | null;
+    progressPercentage?: number | null;
+    targetReached?: boolean;
+    measurementWindow?: {
+        start: string;
+        end: string;
+    } | null;
+    recommendation?: {
+        decision: string;
+        nextStep: string;
+        reason: string;
+    };
+    message?: string;
+};
+
+type ResumeResult = {
+    runId: string;
+    status: string;
+
+    executed: Array<{
+        actionId: string;
+        deliveryId: string;
+        status: string;
+    }>;
+
+    skipped: Array<{
+        actionId: string;
+        reason: string;
+    }>;
+
+    failed: Array<{
+        actionId: string;
+        error: string;
+    }>;
+
+    pendingApproval: number;
+    interrupted: number;
+
+    evaluation?: GoalEvaluation | null;
+};
+
+
+type ResumeResponse = {
+    success: boolean;
+    message: string;
+    data: ResumeResult;
+};
+
+function ResumeWorkerSection({
+    businessId,
+}: {
+    businessId: string;
+}) {
+    const queryClient = useQueryClient();
+
+    const [lastResult, setLastResult] =
+        useState<ResumeResult | null>(null);
+
+    // Fetch approved actions awaiting simulation.
+    const approvedQuery = useQuery({
+        queryKey: [
+            "worker-resume",
+            "approved",
+            businessId,
+        ],
+        queryFn: async () => {
+            const response =
+                await apiClient.get<ApprovedRunsResponse>(
+                    "/approvals/approved",
+                    {
+                        params: { businessId },
+                    }
+                );
+
+            return response.data;
+        },
+    });
+
+    // Group approved actions by their parent run.
+    const approvedRuns = useMemo(() => {
+        const runs = new Map<string, number>();
+
+        for (const action of approvedQuery.data?.data ?? []) {
+            if (!action.run_id) continue;
+
+            runs.set(
+                action.run_id,
+                (runs.get(action.run_id) ?? 0) + 1
+            );
+        }
+
+        return [...runs.entries()].map(
+            ([runId, approvedCount]) => ({
+                runId,
+                approvedCount,
+            })
+        );
+    }, [approvedQuery.data]);
+
+    const resumeMutation = useMutation({
+        mutationFn: async (runId: string) => {
+            const response =
+                await apiClient.post<ResumeResponse>(
+                    `/agent/${runId}/resume`,
+                    {
+                        businessId,
+                    }
+                );
+
+            return response.data;
+        },
+
+        onSuccess: async (response) => {
+            setLastResult(response.data);
+
+            // Refresh approvals, history and dashboard.
+            await queryClient.invalidateQueries();
+        },
+    });
+
+  // Evaluate the business goal for a saved worker run.
+  const evaluationMutation = useMutation({
+    mutationFn: async (runId: string) => {
+      const response = await apiClient.post<{
+        success: boolean;
+        message: string;
+        data: GoalEvaluation;
+      }>(
+        `/agent/${runId}/goal-evaluation`,
+        {
+          businessId,
+        }
+      );
+
+      return response.data;
+    },
+
+    onSuccess: async (response) => {
+      // Show evaluation in the existing Resume Result UI.
+      setLastResult((previous) => {
+        if (!previous) return previous;
+
+        return {
+          ...previous,
+          evaluation: response.data,
+        };
+      });
+
+      await queryClient.invalidateQueries();
+    },
+  });
+
+    function handleResume(runId: string) {
+        if (resumeMutation.isPending) return;
+
+        const confirmed = window.confirm(
+            "Resume this AI Worker? Approved actions will be executed in simulation mode only. No real customer messages will be sent."
+        );
+
+        if (!confirmed) return;
+
+        setLastResult(null);
+        resumeMutation.mutate(runId);
+    }
+
+    return (
+        <section className="rounded-2xl border border-blue-200 bg-white p-4 shadow-sm sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <div className="flex items-center gap-2">
+                        <Play className="h-5 w-5 text-blue-600" />
+
+                        <h2 className="text-lg font-bold text-slate-900">
+                            Autonomous Worker Resume
+                        </h2>
+                    </div>
+
+                    <p className="mt-2 text-sm text-slate-500">
+                        Continue approved AI Worker actions from
+                        their saved execution state.
+                    </p>
+                </div>
+
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                    Simulation Only
+                </span>
+            </div>
+
+            {approvedQuery.isPending && (
+                <p className="mt-5 text-sm text-slate-500">
+                    Checking approved worker actions...
+                </p>
+            )}
+
+            {approvedQuery.isError && (
+                <div
+                    role="alert"
+                    className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-700"
+                >
+                    {getApiErrorMessage(approvedQuery.error)}
+                </div>
+            )}
+
+            {approvedQuery.isSuccess &&
+                approvedRuns.length === 0 && (
+                    <div className="mt-5 rounded-xl bg-slate-50 p-4">
+                        <p className="text-sm font-medium text-slate-700">
+                            No approved actions awaiting execution.
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                            Generate a message draft and approve an
+                            action to enable worker resumption.
+                        </p>
+                    </div>
+                )}
+
+            {approvedRuns.length > 0 && (
+                <div className="mt-5 space-y-3">
+                    {approvedRuns.map((run) => (
+                        <div
+                            key={run.runId}
+                            className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                            <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-900">
+                                    Worker Run
+                                </p>
+
+                                <p className="mt-1 break-all font-mono text-xs text-slate-500">
+                                    {run.runId}
+                                </p>
+
+                                <p className="mt-2 text-xs text-emerald-700">
+                                    {run.approvedCount} approved action(s)
+                                    ready
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                disabled={resumeMutation.isPending}
+                                onClick={() => handleResume(run.runId)}
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                <Play className="h-4 w-4" />
+
+                                {resumeMutation.isPending &&
+                                    resumeMutation.variables === run.runId
+                                    ? "Resuming..."
+                                    : "Resume Worker"}
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {resumeMutation.isError && (
+                <div
+                    role="alert"
+                    className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4"
+                >
+                    <p className="text-sm font-semibold text-red-700">
+                        Worker resume failed
+                    </p>
+
+                    <p className="mt-1 text-sm text-red-600">
+                        {getApiErrorMessage(resumeMutation.error)}
+                    </p>
+                </div>
+            )}
+
+      {lastResult && (
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">
+                Business Goal Evaluation
+              </h3>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Measure customer retention against the
+                saved business goal.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={evaluationMutation.isPending}
+              onClick={() =>
+                evaluationMutation.mutate(lastResult.runId)
+              }
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${
+                  evaluationMutation.isPending
+                    ? "animate-spin"
+                    : ""
+                }`}
+              />
+
+              {evaluationMutation.isPending
+                ? "Evaluating Goal..."
+                : "Evaluate Goal"}
+            </button>
+          </div>
+
+          {evaluationMutation.isError && (
+            <div
+              role="alert"
+              className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {getApiErrorMessage(evaluationMutation.error)}
+            </div>
+          )}
+
+          {evaluationMutation.isSuccess && (
+            <p className="mt-3 text-xs font-medium text-emerald-700">
+              Goal evaluation saved successfully.
+            </p>
+          )}
+        </div>
+      )}
+
+            {lastResult && (
+                <div
+                    role="status"
+                    className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4"
+                >
+                    <h3 className="text-sm font-semibold text-emerald-900">
+                        Worker Resume Result
+                    </h3>
+
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                        <div>
+                            <p className="text-xs text-slate-500">
+                                Executed
+                            </p>
+                            <p className="font-bold text-emerald-700">
+                                {lastResult.executed.length}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p className="text-xs text-slate-500">
+                                Skipped
+                            </p>
+                            <p className="font-bold text-slate-800">
+                                {lastResult.skipped.length}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p className="text-xs text-slate-500">
+                                Failed
+                            </p>
+                            <p className="font-bold text-red-700">
+                                {lastResult.failed.length}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p className="text-xs text-slate-500">
+                                Pending Approval
+                            </p>
+                            <p className="font-bold text-amber-700">
+                                {lastResult.pendingApproval}
+                            </p>
+                        </div>
+                    </div>
+
+                    <p className="mt-3 text-xs text-slate-600">
+                        Status: {lastResult.status}
+                    </p>
+
+                    {lastResult.failed.length > 0 && (
+                        <div className="mt-3 space-y-1">
+                            {lastResult.failed.map((item) => (
+                                <p
+                                    key={item.actionId}
+                                    className="break-words text-xs text-red-700"
+                                >
+                                    {item.actionId}: {item.error}
+                                </p>
+                            ))}
+                        </div>
+                    )}
+
+                    <p className="mt-3 text-xs text-emerald-800">
+                        No real SMS, WhatsApp or email was sent.
+                    </p>
+                </div>
+            )}
+
+            {lastResult?.evaluation && (
+                <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50/50 p-4 sm:p-5">
+                    <h3 className="text-base font-bold text-slate-900">
+                        Goal Evaluation Results
+                    </h3>
+
+                    {!lastResult.evaluation.success ? (
+                        <p className="mt-3 text-sm text-red-700">
+                            {lastResult.evaluation.message ??
+                                "Goal evaluation could not be completed."}
+                        </p>
+                    ) : (
+                        <>
+                            <p className="mt-2 text-xs text-slate-500">
+                                Metric:{" "}
+                                {lastResult.evaluation.metric ??
+                                    "Not available"}
+                            </p>
+
+                            <div className="mt-4 grid grid-cols-3 gap-3">
+                                {[
+                                    {
+                                        label: "Baseline",
+                                        value: lastResult.evaluation.baseline,
+                                    },
+                                    {
+                                        label: "Actual",
+                                        value: lastResult.evaluation.actual,
+                                    },
+                                    {
+                                        label: "Target",
+                                        value: lastResult.evaluation.target,
+                                    },
+                                ].map((item) => (
+                                    <div
+                                        key={item.label}
+                                        className="rounded-xl bg-white p-3"
+                                    >
+                                        <p className="text-xs text-slate-500">
+                                            {item.label}
+                                        </p>
+
+                                        <p className="mt-2 text-lg font-bold text-slate-900">
+                                            {item.value ?? "—"}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {lastResult.evaluation.progressPercentage != null && (
+                                <div className="mt-5">
+                                    <div className="flex justify-between text-sm">
+                                        <span className="font-medium text-slate-700">
+                                            Goal Progress
+                                        </span>
+                                        <span className="font-bold text-blue-700">
+                                            {lastResult.evaluation.progressPercentage}%
+                                        </span>
+                                    </div>
+
+                                    <div className="mt-2 h-3 overflow-hidden rounded-full bg-slate-200">
+                                        <div
+                                            className="h-full rounded-full bg-blue-600"
+                                            style={{
+                                                width: `${Math.min(
+                                                    100,
+                                                    Math.max(
+                                                        0,
+                                                        lastResult.evaluation.progressPercentage
+                                                    )
+                                                )}%`,
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {lastResult.evaluation.recommendation && (
+                                <div className="mt-5 rounded-xl border border-blue-100 bg-white p-4">
+                                    <p className="text-xs font-semibold uppercase text-blue-700">
+                                        AI Worker Next Recommendation
+                                    </p>
+
+                                    <p className="mt-2 text-sm font-semibold text-slate-900">
+                                        {lastResult.evaluation.recommendation.nextStep
+                                            .replaceAll("_", " ")}
+                                    </p>
+
+                                    <p className="mt-2 text-sm text-slate-600">
+                                        {lastResult.evaluation.recommendation.reason}
+                                    </p>
+                                </div>
+                            )}
+
+                            <p className="mt-4 text-xs text-slate-500">
+                                Based on completed transaction records.
+                                Simulated messages do not prove actual
+                                customer retention or revenue impact.
+                            </p>
+                        </>
+                    )}
+                </div>
+            )}
+
+        </section>
+    );
+}
+
 export default function ApprovalsPage() {
     const {
         data,
@@ -555,7 +1081,7 @@ export default function ApprovalsPage() {
         useState<PriorityFilter>("all");
     const [page, setPage] = useState(1);
 
-  
+
     const approvals = data?.data ?? [];
 
     const filteredApprovals = useMemo(() => {
@@ -652,7 +1178,10 @@ export default function ApprovalsPage() {
                 </button>
             </div>
 
-          
+
+            {/* Resume approved AI Worker runs */}
+            <ResumeWorkerSection businessId={APP_CONFIG.businessId} />
+
             {/* Approved Actions Awaiting Simulation */}
             <ApprovedActionsList businessId={APP_CONFIG.businessId} />
 

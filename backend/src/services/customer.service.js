@@ -1,6 +1,9 @@
 
 import { supabase } from "../config/supabase.js";
 
+/**
+ * Get customers belonging to an authorized business.
+ */
 export async function getCustomers({
   businessId,
   page = 1,
@@ -30,7 +33,7 @@ export async function getCustomers({
   if (error) throw error;
 
   return {
-    customers: data,
+    customers: data ?? [],
     pagination: {
       page,
       limit,
@@ -40,11 +43,27 @@ export async function getCustomers({
   };
 }
 
-export async function getCustomerById(id) {
+/**
+ * Fetch customer only when it belongs to the
+ * authorized business.
+ *
+ * Requires BOTH customerId and businessId.
+ */
+export async function getCustomerById(
+  customerId,
+  businessId
+) {
+  if (!customerId || !businessId) {
+    throw new Error(
+      "Customer ID and business ID are required"
+    );
+  }
+
   const { data, error } = await supabase
     .from("customers")
     .select("*")
-    .eq("id", id)
+    .eq("id", customerId)
+    .eq("business_id", businessId)
     .maybeSingle();
 
   if (error) throw error;
@@ -52,10 +71,24 @@ export async function getCustomerById(id) {
   return data;
 }
 
+/**
+ * Fetch transactions only for the specified
+ * customer within the authorized business.
+ *
+ * The businessId filter prevents cross-business
+ * transaction access.
+ */
 export async function getCustomerTransactions(
   customerId,
-  { page = 1, limit = 20 }
+  businessId,
+  { page = 1, limit = 20 } = {}
 ) {
+  if (!customerId || !businessId) {
+    throw new Error(
+      "Customer ID and business ID are required"
+    );
+  }
+
   const start = (page - 1) * limit;
 
   const { data, count, error } = await supabase
@@ -65,6 +98,7 @@ export async function getCustomerTransactions(
       { count: "exact" }
     )
     .eq("customer_id", customerId)
+    .eq("business_id", businessId)
     .order("occurred_at", { ascending: false })
     .order("id", { ascending: true })
     .range(start, start + limit - 1);
@@ -72,7 +106,7 @@ export async function getCustomerTransactions(
   if (error) throw error;
 
   return {
-    transactions: data,
+    transactions: data ?? [],
     pagination: {
       page,
       limit,

@@ -13,14 +13,30 @@ import {
   evaluateAgentRun,
   saveAgentEvaluation,
 } from "../services/evaluation.service.js";
+
+
+const uuidSchema = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  "Invalid UUID format"
+);
+
 const runAgentSchema = z.object({
-  businessId: z.string().regex(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-    "Invalid business ID"
-  ),
-  goal: z.enum(["customer_retention"]).default("customer_retention"),
-  limit: z.number().int().min(1).max(100).default(20),
+  businessId: uuidSchema,
+
+  // Optional for existing frontend compatibility.
+  goalId: uuidSchema.optional(),
+
+  goal: z.enum([
+    "customer_retention",
+  ]).default("customer_retention"),
+
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(20),
 }).strict();
+
 
 // Execute AI Agent
 export async function executeAgent(req, res, next) {

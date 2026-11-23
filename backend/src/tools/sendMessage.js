@@ -1,28 +1,21 @@
 
 import { supabase } from "../config/supabase.js";
 import { syncAgentRunStatus } from "../services/runLifecycle.service.js";
+
 /**
  * GrowPilot AI — Simulated Message Execution
  *
- * Responsibilities:
- * - Execute only human-approved actions
- * - Use the saved AI-generated message draft
- * - Never generate a new message during execution
- * - Prevent duplicate execution
- * - Save simulated message deliveries
- * - Maintain execution logs
- * - Support crash recovery
+ * Security:
+ * - Business-scoped action access
+ * - Human approval required
+ * - Simulation-only execution
+ * - Saved draft reuse
+ * - Conditional execution claim
+ * - Business-scoped delivery recovery
  *
- * IMPORTANT:
- * No real SMS, WhatsApp or email is sent.
+ * No real messages are sent.
  */
 
-/**
- * Get the AI message saved during the draft stage.
- *
- * Never generate a new message after owner approval.
- * The approved draft must be the executed message.
- */
 function getSavedMessage(action) {
   const message = action.payload?.messageDraft;
 
@@ -36,8 +29,7 @@ function getSavedMessage(action) {
     );
   }
 
-  // Reject non-English scripts in the final message.
-  // Allow common emoji and variation selectors.
+  // Allow English text and emoji.
   const textWithoutEmoji = message.replace(
     /[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu,
     ""
@@ -56,12 +48,18 @@ function getSavedMessage(action) {
  * Execute a previously approved message action.
  *
  * Execution mode: simulation only.
+ *
+ * Caller must have already verified business
+ * membership and action ownership.
  */
 export async function executeApprovedMessage({
   actionId,
   businessId,
 }) {
-  // 1. Fetch the action.
+  // ====================================================
+  // 1. FETCH BUSINESS-SCOPED ACTION
+  // ====================================================
+
   const { data: action, error: fetchError } =
     await supabase
       .from("agent_actions")
@@ -76,7 +74,10 @@ export async function executeApprovedMessage({
     throw new Error("Action not found");
   }
 
-  // 2. Ensure explicit human approval.
+  // ====================================================
+  // 2. VERIFY HUMAN APPROVAL
+  // ====================================================
+
   if (action.status !== "approved") {
     throw new Error(
       `Action cannot execute. Current status: ${action.status}`
@@ -87,7 +88,10 @@ export async function executeApprovedMessage({
     throw new Error("Human approval is required");
   }
 
-  // 3. Enforce simulation-only execution.
+  // ====================================================
+  // 3. ENFORCE SIMULATION-ONLY EXECUTION
+  // ====================================================
+
   if (
     action.action_type !== "send_message" ||
     action.channel !== "simulation"
@@ -97,12 +101,16 @@ export async function executeApprovedMessage({
     );
   }
 
-  // 4. Validate saved AI message BEFORE claiming execution.
-  // Missing drafts should not turn into failed executions.
+  // ====================================================
+  // 4. VALIDATE SAVED MESSAGE
+  // ====================================================
+
   const approvedMessage = getSavedMessage(action);
 
-  // 5. Atomically claim the action.
-  // Only one request can transition approved -> executing.
+  // ====================================================
+  // 5. CONDITIONALLY CLAIM EXECUTION
+  // ====================================================
+
   const { data: claimedAction, error: claimError } =
     await supabase
       .from("agent_actions")
@@ -112,6 +120,8 @@ export async function executeApprovedMessage({
       .eq("id", actionId)
       .eq("business_id", businessId)
       .eq("status", "approved")
+      .eq("action_type", "send_message")
+      .eq("channel", "simulation")
       .select()
       .maybeSingle();
 
@@ -124,18 +134,31 @@ export async function executeApprovedMessage({
   }
 
   try {
-    // 6. Re-read the saved draft from the claimed action.
+    // ================================================
+    // 6. REVALIDATE CLAIMED ACTION
+    // ================================================
+
+    if (
+      claimedAction.requires_approval &&
+      !claimedAction.approved_at
+    ) {
+      throw new Error("Human approval is required");
+    }
+
     const message = getSavedMessage(claimedAction);
 
-    // Never execute a different draft from the one validated.
     if (message !== approvedMessage) {
       throw new Error(
         "Message draft changed during execution. Manual review required."
       );
     }
 
-    // 7. Record the simulated delivery.
-    // UNIQUE(action_id) prevents duplicate delivery records.
+    // ================================================
+    // 7. SAVE SIMULATED DELIVERY
+    // ================================================
+
+    // UNIQUE(action_id) should be enforced
+    // by the database schema.
     const { data: delivery, error: deliveryError } =
       await supabase
         .from("message_deliveries")
@@ -154,22 +177,27 @@ export async function executeApprovedMessage({
 
     if (deliveryError) throw deliveryError;
 
-    // 8. Complete the action.
+    // ================================================
+    // 8. COMPLETE ACTION
+    // ================================================
+
     const executedAt = new Date().toISOString();
 
-    const { data: completedAction, error: completeError } =
-      await supabase
-        .from("agent_actions")
-        .update({
-          status: "completed",
-          executed_at: executedAt,
-          last_error: null,
-        })
-        .eq("id", actionId)
-        .eq("business_id", businessId)
-        .eq("status", "executing")
-        .select("id, status")
-        .maybeSingle();
+    const {
+      data: completedAction,
+      error: completeError,
+    } = await supabase
+      .from("agent_actions")
+      .update({
+        status: "completed",
+        executed_at: executedAt,
+        last_error: null,
+      })
+      .eq("id", actionId)
+      .eq("business_id", businessId)
+      .eq("status", "executing")
+      .select("id, status")
+      .maybeSingle();
 
     if (completeError) throw completeError;
 
@@ -179,27 +207,29 @@ export async function executeApprovedMessage({
       );
     }
 
-    // 9. Record the execution event.
-    const { error: logError } =
-      await supabase
-        .from("execution_logs")
-        .insert({
-          business_id: businessId,
-          run_id: claimedAction.run_id,
-          action_id: actionId,
-          event_type: "simulated_message_sent",
-          severity: "info",
-          tool_name: "send_message",
-          details: {
-            deliveryId: delivery.id,
-            channel: "simulation",
-            messageSource:
-              claimedAction.payload?.messageDraftSource ??
-              "saved_draft",
-            message,
-            executedAt,
-          },
-        });
+    // ================================================
+    // 9. WRITE EXECUTION LOG
+    // ================================================
+
+    const { error: logError } = await supabase
+      .from("execution_logs")
+      .insert({
+        business_id: businessId,
+        run_id: claimedAction.run_id,
+        action_id: actionId,
+        event_type: "simulated_message_sent",
+        severity: "info",
+        tool_name: "send_message",
+        details: {
+          deliveryId: delivery.id,
+          channel: "simulation",
+          messageSource:
+            claimedAction.payload?.messageDraftSource ??
+            "saved_draft",
+          message,
+          executedAt,
+        },
+      });
 
     if (logError) {
       console.error(
@@ -208,9 +238,10 @@ export async function executeApprovedMessage({
       );
     }
 
-    // 10. Synchronize the parent agent run status.
-    // A lifecycle sync failure must not trigger a retry
-    // of an already saved simulated delivery.
+    // ================================================
+    // 10. SYNC PARENT AGENT RUN
+    // ================================================
+
     let runLifecycle = {
       updated: false,
       status: null,
@@ -227,7 +258,10 @@ export async function executeApprovedMessage({
       );
     }
 
-    // 10. Return the execution result.
+    // ================================================
+    // 11. RETURN RESULT
+    // ================================================
+
     return {
       success: true,
       actionId,
@@ -243,14 +277,21 @@ export async function executeApprovedMessage({
       executedAt,
     };
   } catch (error) {
-    // 11. Recovery safety.
-    // If a delivery exists, don't automatically retry it.
-    const { data: existingDelivery, error: lookupError } =
-      await supabase
-        .from("message_deliveries")
-        .select("id")
-        .eq("action_id", actionId)
-        .maybeSingle();
+    // ================================================
+    // 12. SAFE RECOVERY HANDLING
+    // ================================================
+
+    // Include BOTH business and action filters.
+    // Do not modify another business's delivery.
+    const {
+      data: existingDelivery,
+      error: lookupError,
+    } = await supabase
+      .from("message_deliveries")
+      .select("id")
+      .eq("business_id", businessId)
+      .eq("action_id", actionId)
+      .maybeSingle();
 
     if (lookupError) {
       console.error(
@@ -259,13 +300,18 @@ export async function executeApprovedMessage({
       );
     }
 
+    // Only mark as failed when the delivery lookup
+    // succeeded and confirmed no delivery exists.
     if (!lookupError && !existingDelivery) {
       const { error: failureUpdateError } =
         await supabase
           .from("agent_actions")
           .update({
             status: "failed",
-            last_error: error.message,
+            last_error: String(error.message).slice(
+              0,
+              2000
+            ),
           })
           .eq("id", actionId)
           .eq("business_id", businessId)
@@ -279,8 +325,8 @@ export async function executeApprovedMessage({
       }
     }
 
-    // If delivery already exists or lookup is uncertain,
-    // retain executing status for recovery reconciliation.
+    // If delivery exists or lookup failed, retain
+    // executing status for manual reconciliation.
     throw error;
   }
 }

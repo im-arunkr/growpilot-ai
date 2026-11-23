@@ -17,7 +17,9 @@ import { supabase } from "../config/supabase.js";
 export async function saveAgentExecution({
   runId,
   businessId,
+  goalId = null,
   goal,
+  goalProgress = null,
   actionPlan,
   steps = [],
   summary = {},
@@ -30,19 +32,42 @@ export async function saveAgentExecution({
     throw new Error("Invalid action plan");
   }
 
-  // Resolve existing active business goal
+
+  // Resolve an active goal belonging to this business.
+  // Explicit goalId takes priority when provided.
+
+  let goalQuery = supabase
+    .from("agent_goals")
+    .select(
+      "id, business_id, goal_type, title, target_metric, baseline_value, target_value, due_at"
+    )
+    .eq("business_id", businessId)
+    .eq("goal_type", goal)
+    .eq("status", "active");
+
+  if (goalId) {
+    goalQuery = goalQuery.eq("id", goalId);
+  }
+
   const { data: goalRecord, error: goalError } =
-    await supabase
-      .from("agent_goals")
-      .select("id")
-      .eq("business_id", businessId)
-      .eq("goal_type", goal)
-      .eq("status", "active")
+    await goalQuery
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
   if (goalError) throw goalError;
+
+  if (!goalRecord) {
+    const error = new Error(
+      "No matching active business goal found"
+    );
+
+    error.code = "GOAL_NOT_FOUND";
+    error.statusCode = 404;
+
+    throw error;
+  }
+
 
   if (!goalRecord) {
     throw new Error("No active agent goal found");
@@ -75,12 +100,40 @@ export async function saveAgentExecution({
         status: "waiting_approval",
         current_step: "awaiting_human_approval",
         attempt_count: 1,
+
         checkpoint: {
-          goal,
+          version: 2,
+
+          goal: {
+            id: goalRecord.id,
+            type: goal,
+            title: goalRecord.title,
+            metric: goalRecord.target_metric,
+            baseline: goalRecord.baseline_value,
+            target: goalRecord.target_value,
+            dueAt: goalRecord.due_at,
+          },
+
+          goalProgress,
+
+          workflow: {
+            currentStep: "awaiting_human_approval",
+            completedSteps: steps
+              .filter((step) => step.status === "completed")
+              .map((step) => step.step),
+
+            pendingApproval:
+              actionPlan.summary.pendingApproval,
+
+            resumeFrom: "approval_resolution",
+          },
+
           steps,
           summary,
-          pendingApproval: actionPlan.summary.pendingApproval,
+
+          checkpointSavedAt: new Date().toISOString(),
         },
+
         summary: `Generated ${actionPlan.actions.length} retention actions`,
         started_at: steps[0]?.timestamp ??
           new Date().toISOString(),

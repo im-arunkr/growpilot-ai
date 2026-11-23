@@ -2,205 +2,196 @@
 
 # 🌱 GrowPilot AI
 
-### Your AI-powered customer retention & business growth copilot
+### A goal-driven, human-supervised AI Worker for small-business customer retention
 
-**Understand customers. Identify churn risk. Generate smart actions. Keep humans in control.**
+**Analyze customers · Plan interventions · Request approval · Resume execution · Measure results**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19-149eca?logo=react)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Frontend-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-Backend-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![Supabase](https://img.shields.io/badge/Supabase-Database-3ecf8e?logo=supabase&logoColor=white)](https://supabase.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-Local_AI-white)](https://ollama.com/)
-[![Status](https://img.shields.io/badge/Status-Active_Development-f59e0b)](#development-status)
+[![Node.js](https://img.shields.io/badge/Node.js-Express-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Supabase](https://img.shields.io/badge/Supabase-Postgres-3ecf8e?logo=supabase&logoColor=white)](https://supabase.com/)
+[![Ollama](https://img.shields.io/badge/Ollama-qwen2.5%3A3b-white)](https://ollama.com/)
 
-**Full-stack AI application · Human-in-the-loop approvals · Demo-safe execution**
+**Working prototype · Synthetic data · Simulation-only outreach**
 
-[Overview](#-overview) · [Features](#-features) · [Architecture](#-system-architecture) · [Getting Started](#-getting-started) · [Owner Journey](#-a-day-in-aruns-shoes) · [API](#-api-overview) · [Roadmap](#-development-status)
+[Overview](#overview) · [Demo](#demonstration) · [Architecture](#architecture) · [Setup](#local-setup) · [Evaluation](#evaluation-evidence) · [Limitations](#limitations)
 
 </div>
 
 ---
 
-## ✨ Overview
+## Overview
 
-Small businesses often have customer and transaction data but lack the time to turn it into timely, personalized follow-ups. **GrowPilot AI** is a full-stack customer-retention workspace that combines business analytics, customer monitoring, local AI-generated suggestions, and a human approval workflow.
+A micro-entrepreneur with falling repeat business needs more than a chatbot: they need a dependable system that finds customers at risk of churning, recommends useful interventions, safely carries out approved work, and checks whether the business goal is being met.
 
-The demo follows **Arun**, owner of **Arun Digital Services**, as he reviews customer activity and chooses which AI-recommended retention actions should proceed.
+**GrowPilot AI** is a full-stack prototype for that workflow. Its example entrepreneur is **Arun**, owner of **Arun Digital Services**. The application uses synthetic customers and transactions; it does **not** send actual SMS, WhatsApp, or email messages.
 
-> **Important:** This is a development/demo project using sample business data. Message execution is **simulated**; the application does **not** send real WhatsApp, SMS, or email campaigns. AI recommendations are drafts that require human review.
+Unlike an isolated text-generation demo, GrowPilot AI stores its goals, runs, plans, actions, approval state, execution records and evaluation evidence in Supabase so work can continue after a backend restart.
 
-### What makes it different?
+### Defined business goal
 
-| 🔍 Visibility | 🧠 Local AI | ✅ Human control | 📈 Measurement |
-|---|---|---|---|
-| See business and customer activity in one workspace | Generate suggested retention actions using Ollama | Review, edit/regenerate, approve, or reject actions | Explore transaction and service-fee trends |
+| Field | Demo configuration |
+|---|---|
+| Business | Arun Digital Services (synthetic) |
+| Goal | Improve repeat customer retention |
+| Metric | `repeat_customer_rate` |
+| Configured baseline | **20%** — illustrative, not historically verified |
+| Target | **30%** |
+| Target date | **22 December 2026** |
+| Measurement | Repeat-customer rate derived from completed transactions within the evaluation window |
 
-## 🚀 Features
+A recent demonstration evaluation reported **72% observed repeat-customer rate** and **100% goal progress** against the configured 30% target. **This is not proof that the AI Worker caused an increase**: the baseline was manually configured for the demo, and customer messages are simulated. The definition of done for the *engineering demonstration* is reliable planning, controlled execution, traceability and measurable evaluation—not a demonstrated real-world income increase.
 
-### 1. 📊 Dashboard — a business overview
+## What the worker does
 
-A landing page for important metrics, recent activity, and an overview of the agent workflow. Designed to give Arun a quick starting point before drilling into customers or actions.
+1. **Receives the goal** and loads saved business context and current goal progress.
+2. **Uses tools** to identify inactive customers and rank retention opportunities.
+3. **Plans actions**, optionally enriching strategies with local Ollama inference. If the model fails, it switches to deterministic recommendations.
+4. **Persists the plan and checkpoint**, including actions requiring human review.
+5. **Hands off to a human** to generate/review drafts and approve or reject actions.
+6. **Resumes from persisted state**, executing only eligible approved actions in simulation; terminal actions are skipped on retry.
+7. **Measures the business metric** from transaction records, stores an evaluation and suggests the next step.
+8. **Exposes activity history and evidence** so a reviewer can inspect decisions and failures.
 
-### 2. 👥 Customers — explore the customer base
+### Interfaces
 
-- Browse customers in a responsive desktop table or mobile card view.
-- Search, filter, sort, and paginate customers.
-- Review customer activity to help identify potential follow-up opportunities.
+| Route | What it shows |
+|---|---|
+| `/` | Dashboard and business summary |
+| `/customers` | Searchable customer directory and activity |
+| `/agent` | Goal-driven agent runs and proposed interventions |
+| `/approvals` | Draft review, approvals, Resume Worker, Evaluate Goal |
+| `/analytics` | Transactions, service-fee revenue, trends |
+| `/insights` | Business insights |
+| `/history` | Agent events, approvals, simulated execution, evidence panel |
+| `/settings` | Application and business settings |
 
-### 3. 🤖 AI Agent — from signals to suggestions
+The UI is authenticated, with business membership and role checks in backend routes. Owner/admin permissions protect sensitive execution operations. Do not treat this prototype as a production security certification.
 
-- Run the retention agent for the demo business.
-- Generate prioritized customer-retention action plans.
-- Read the reasoning attached to suggested actions.
-- Browse agent-run activity history.
-
-**AI suggestions are not sent automatically.** They flow into a separate review process.
-
-### 4. 🛡️ Approvals — human-in-the-loop execution
-
-- Review pending AI-recommended actions.
-- Generate or regenerate draft outreach messages.
-- Approve or reject an action manually.
-- View approved actions and simulate execution.
-- Search/filter execution history.
-
-This separation keeps **recommendation**, **authorization**, and **execution** as distinct steps.
-
-### 5. 📈 Analytics — understand transaction performance
-
-- Total customers and completed transactions.
-- Service-fee revenue versus total transaction value.
-- Monthly revenue chart and transaction trend chart.
-- Transaction completion rate and monthly performance table.
-- Responsive charts powered by real backend analytics responses.
-
-**Metric clarity:** Service-fee revenue is *not* the same as the full transaction value. The latest month can be partial (month-to-date).
-
-## 🧭 A day in Arun's shoes
-
-Here is the practical demo journey for the business owner:
-
-| Step | Where | What Arun does | What happens |
-|:---:|---|---|---|
-| 01 | **Dashboard** | Opens GrowPilot AI | Sees a high-level business snapshot and recent activity |
-| 02 | **Customers** | Searches, filters, and reviews customers | Identifies which customers may need attention |
-| 03 | **AI Agent** | Clicks **Run Agent** | Backend analyzes available business/customer information and prepares action suggestions |
-| 04 | **AI Agent** | Reviews recommendations and reasoning | Understands the proposed retention action before acting |
-| 05 | **Approvals** | Opens pending actions | Inspects what the AI is suggesting |
-| 06 | **Approvals** | Generates or regenerates a draft message | Gets a proposed customer-facing message for review |
-| 07 | **Approvals** | Approves or rejects each action | Records a deliberate human decision |
-| 08 | **Approvals** | Simulates an approved action's execution | Records a demo execution event; **no real message is sent** |
-| 09 | **Approvals** | Checks execution history | Reviews prior simulated workflow outcomes |
-| 10 | **Analytics** | Examines revenue and monthly transaction trends | Understands historical business performance |
-
-> **Example flow:** A customer appears inactive → the agent recommends a follow-up → Arun reads the reasoning → generates a draft → approves it → runs a simulation → reviews its record.
-
-## 🏗️ System architecture
+## Architecture
 
 ```mermaid
 flowchart TD
-    OWNER["👤 Arun / Business Owner"] --> WEB["Next.js Frontend<br/>React + TypeScript + Tailwind"]
-    WEB --> QUERY["React Query + Axios<br/>API State & Requests"]
-    QUERY --> API["Express REST API<br/>Node.js"]
-    API --> SERVICES["Business Logic<br/>Analytics · Agent · Approvals"]
-    SERVICES <--> DB[("Supabase<br/>Business & Demo Data")]
-    SERVICES --> OLLAMA["Ollama<br/>qwen2.5:3b"]
-    OLLAMA --> SERVICES
-    SERVICES --> AUDIT["Action / Run History<br/>and Audit Logs"]
-    AUDIT --> DB
-    SERVICES --> SIM["Simulation-only Execution<br/>No Real Messages"]
+    U[Business owner] --> UI[Next.js / React / TypeScript]
+    UI --> API[Authenticated Express API]
+    API --> G[Goal + progress service]
+    G --> P[Agent runner / planner]
+    P --> T[Tool: find inactive customers]
+    T --> DB[(Supabase PostgreSQL)]
+    P --> M{Local Ollama available?}
+    M -->|Yes| L[qwen2.5:3b enrichment]
+    M -->|No / error| F[Deterministic fallback]
+    L --> S[Persist plan + actions + checkpoint]
+    F --> S
+    S --> DB
+    S --> H{Human decision}
+    H -->|Not yet| W[Waiting for approval]
+    H -->|Reject| R[Do not execute]
+    H -->|Approve valid draft| E[Resume executor]
+    E --> D[Simulated delivery / audit]
+    D --> DB
+    E --> V[Goal evaluation]
+    V --> DB
+    DB --> HIST[History / execution evidence UI]
 ```
 
-### How a request moves through the application
+### Main components
 
-1. Arun clicks a control in the **Next.js** frontend.
-2. A frontend hook calls the **Express REST API** via the API client.
-3. The backend validates the request and runs the relevant service logic.
-4. Services read/write demo business information in **Supabase**; agent functionality can call the local **Ollama** model.
-5. The backend returns structured JSON.
-6. **React Query** updates or refreshes frontend data; the UI shows the result and any errors.
+| Layer | Technology / purpose |
+|---|---|
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS, TanStack React Query, Axios, Recharts |
+| API | Node.js, Express, Zod request validation |
+| Persistence | Supabase Postgres: business data, agent goals/runs, checkpoints, actions, execution logs and evaluations |
+| Inference | Local Ollama with `qwen2.5:3b`; deterministic fallback when unavailable |
+| Execution | Saved-state resume with human approval; outbound communication simulated |
+| Observability | Run/step/action logs, history view, evaluation results |
 
-### Why these technologies?
+**Why this design?** Business decisions and authorization remain in normal application code; the LLM is an optional strategy-enrichment component, not a source of unrestricted authority. Supabase persists state across backend restarts. Specialized responsibilities are separated into planning, tools, execution, and evaluation services; this prototype does not claim to run a distributed multi-agent framework.
 
-| Layer | Technology | Why it is used |
+## Demonstration
+
+Use synthetic data only. The UI workflow is:
+
+1. Log in and open **AI Agent** (`/agent`). Run a retention worker.
+2. Inspect prioritized customers, model source and saved recommendations.
+3. Open **Approvals** (`/approvals`). Generate a draft and approve one suitable action.
+4. Click **Resume Worker** to execute the approved action **in simulation**.
+5. Click **Evaluate Goal** to read actual transaction-based goal progress.
+6. Open **History** (`/history`) to inspect logs and evidence.
+
+To demonstrate a **restart**, approve a valid action but do not resume; stop the backend (`Ctrl+C`), restart it, and then resume the saved run. To demonstrate **retry safety**, call the authenticated `POST /api/agent/:runId/resume` again for that same run and verify that the completed action is skipped and only one `message_deliveries` row remains.
+
+To demonstrate **model failure**, stop the Ollama listener, confirm `http://localhost:11434/api/tags` is unavailable, then start a *new* agent run. Confirm `ai.strategySource = deterministic_fallback`, inspect `ai.fallbackReason`, and confirm the plan is persisted awaiting human approval. Restart Ollama afterward.
+
+> **Permissions and consent:** All execution in the demo is simulated. Some sample customers have `marketingConsent: false`; no live marketing outreach should occur without appropriate consent and additional production safeguards.
+
+## Evaluation evidence
+
+The tested scenarios are documented in **[`docs/EVALUATION.md`](docs/EVALUATION.md)**.
+
+| Scenario | Observed result | Scope |
 |---|---|---|
-| Frontend framework | **Next.js 16 / React** | App Router, reusable components, modern client-side UI |
-| UI language | **TypeScript** | Safer interfaces for API responses and component props |
-| Styling | **Tailwind CSS v4** | Responsive layouts and consistent styling |
-| Data fetching | **TanStack React Query** | Loading/error states, caching, and refetching |
-| API client | **Axios** | Consistent frontend-to-backend HTTP requests |
-| Visualization | **Recharts** | Revenue and transaction charts |
-| Icons / feedback | **Lucide React / Sonner** | Recognizable icons and user notifications |
-| Backend | **Node.js + Express** | REST routes, validation, and application workflows |
-| Database | **Supabase** | Persistence for business, customer, transaction and workflow data |
-| AI runtime | **Ollama** | Run an AI model locally during development |
-| AI model | **qwen2.5:3b** | Produce AI-generated suggestions and draft content |
+| Approved action, resume after backend restart | **PASS** — one simulated action executed | Persisted-state recovery demonstrated |
+| Retry the completed action | **PASS** — `executed: []`, completed action skipped | Post-retry `message_deliveries` count remained **1** |
+| Approved action missing a valid saved draft | **PASS (safe block)** — action not executed, manual review requested | Action needs separate remediation |
+| Ollama unavailable | **PASS** — deterministic fallback; **4** actions saved and **9** logs recorded | Local model connection refused; model-enriched actions **0** |
+| Goal measurement | **Working** — observed repeat rate **72%**, target **30%** | No valid causal attribution; baseline illustrative |
 
-## 🗂️ Repository structure
+**Reproducible identifiers for the captured synthetic test:**
 
-```text
-growpilot-ai/
-├── frontend/                     # Next.js application
-│   └── src/
-│       ├── app/
-│       │   └── (dashboard)/
-│       │       ├── page.tsx       # Dashboard
-│       │       ├── customers/     # Customer explorer
-│       │       ├── agent/         # AI agent workspace
-│       │       ├── approvals/     # Human review & execution
-│       │       └── analytics/     # Business performance
-│       ├── components/            # Shared UI and page components
-│       ├── features/              # Feature-level APIs and hooks
-│       └── lib/                   # API client and configuration
-├── backend/
-│   └── src/
-│       ├── routes/                # REST endpoint definitions
-│       ├── controllers/           # Request validation/handling
-│       └── services/              # Business and AI workflows
-├── .gitignore
-└── README.md
-```
+- Run (fallback and retry example): `f4cb5b3f-26dd-45dc-8b61-8a14893034d8`
+- Completed action: `9e6023c3-a526-450c-9a5f-47ce06b8409d`
+- Missing-draft adverse run: `6314e924-841c-4d2a-8c56-dbafe7822edd`
 
-*This tree highlights key areas rather than every file. The remaining sidebar destinations are listed in the roadmap below.*
+These identifiers refer to the author's development database; another installation will generate different IDs. A fresh clone needs compatible database schema, authentication configuration and synthetic seed data to reproduce the entire experience.
 
-## ⚙️ Getting started
+### Inference and cost notes
+
+- **Primary:** local `qwen2.5:3b` using Ollama.
+- **Fallback:** deterministic retention strategy when model inference fails.
+- **Measured fallback example:** `ECONNREFUSED 127.0.0.1:11434`, 4,907 ms total worker-run duration (not LLM latency).
+- **Cost:** hosted-model API charges are avoided for this local demonstration, but machine electricity, memory and operational costs are not zero; precise per-run cost/token totals have **not** been measured.
+
+## Local setup
 
 ### Prerequisites
 
-- **Node.js** and **npm** compatible with the project's installed dependencies.
-- A **Supabase** project with the required schema and demo data.
-- **Ollama** installed and accessible locally.
-- The **qwen2.5:3b** model downloaded.
-- A local copy of this repository.
+- Windows/macOS/Linux, Node.js and npm compatible with the frontend/backend package dependencies.
+- An accessible Supabase project with the **required application schema, RLS/auth setup and synthetic seed data**.
+- Ollama and local model `qwen2.5:3b`.
+- A Supabase demo user authorized for the synthetic business.
 
-### 1. Clone the repository
+> **Reproducibility limitation:** Database migrations/seed instructions and verified `.env.example` files must be provided/checked before claiming a one-command fresh setup. The variable names below are intentionally *not guessed*. Inspect `backend/src/` and `frontend/src/` configuration and include safe example files based on actual code before submission.
+
+### 1. Clone
 
 ```bash
-git clone https://github.com/<YOUR_USERNAME>/<YOUR_REPOSITORY>.git
-cd <YOUR_REPOSITORY>
+git clone https://github.com/im-arunkr/growpilot-ai.git
+cd growpilot-ai
 ```
 
-Replace the placeholder with the repository URL once it is created.
+### 2. Environment configuration
 
-### 2. Configure environment variables
-
-Both applications may require local environment files. Create the files using **the variable names actually referenced by the project code** or maintained `.env.example` files:
+Create local configuration files based on the actual imports/config modules:
 
 ```text
 backend/.env
 frontend/.env.local
 ```
 
-Typically these include the backend port, Supabase connection credentials, the local Ollama endpoint, and the frontend's backend API URL. **Exact names are project-specific—check the source rather than copying guessed variable names.**
+Check project code and, where available, copy `backend/.env.example` and `frontend/.env.example`. Configure backend port, Supabase URL and server-only credentials, Ollama endpoint, and the frontend's public API URL and auth configuration as needed by the actual application. **Do not copy service-role keys, bearer tokens or private credentials into the README or frontend bundle.** Ensure the demo business is accessible to the logged-in user.
 
-> 🔒 **Never commit `.env`, `.env.local`, tokens, passwords, or Supabase service-role credentials.** Keep secrets only in your local environment or a secure secrets manager.
+### 3. Install and start Ollama
 
-### 3. Install dependencies
+```bash
+ollama pull qwen2.5:3b
+ollama serve
+```
 
-Open two terminals from the repository root:
+If Ollama is already running as a desktop app or service, you do not need a second `ollama serve`. Confirm readiness with `ollama list` or `curl http://localhost:11434/api/tags`.
 
-**Terminal A — Backend**
+### 4. Backend
 
 ```bash
 cd backend
@@ -208,7 +199,9 @@ npm install
 npm run dev
 ```
 
-**Terminal B — Frontend**
+Default local development API: `http://localhost:5000` (subject to environment settings).
+
+### 5. Frontend — separate terminal
 
 ```bash
 cd frontend
@@ -216,192 +209,107 @@ npm install
 npm run dev
 ```
 
-> These commands assume both `package.json` files define a `dev` script. Confirm available commands with `npm run` inside each folder.
+Open **http://localhost:3000** and sign in with a configured synthetic-demo account.
 
-### 4. Set up local AI
-
-```bash
-ollama pull qwen2.5:3b
-ollama serve
-```
-
-If Ollama is already running as a background service, starting it again may report that the address is in use; use the existing service instead.
-
-### 5. Open the application
-
-| Service | Default local URL |
-|---|---|
-| Frontend | `http://localhost:3000` |
-| Backend | `http://localhost:5000` |
-| Analytics API | `http://localhost:5000/api/analytics?businessId=<YOUR_BUSINESS_UUID>` |
-
-Port settings may differ depending on local configuration. The seeded demo business used during development is **Arun Digital Services**.
-
-### 6. Production build check
+### 6. Build checks
 
 ```bash
 cd frontend
 npm run build
 ```
 
-## 🔌 API overview
+Use `npm run` in each folder to inspect other scripts and any backend test/build scripts. Successful installation and build have **not** been independently verified from a fresh clone for this README update.
 
-The frontend communicates with the Express backend through JSON HTTP APIs.
+## Selected API endpoints
+
+Most API operations require an authenticated user and authorized business membership. Consult `backend/src/routes/` for exact payloads and middleware.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/api/analytics?businessId=...` | Business KPIs and monthly trends |
-| `GET` | `/api/agent/history?businessId=...` | Paginated agent activity/audit history |
-| `GET` | `/api/approvals/approved` | Retrieve approved actions |
-| `GET` | `/api/approvals/history` | Retrieve execution history |
-| `POST` | `/api/agent/insights` | Business insights generation endpoint; frontend page not yet implemented |
+| `POST` | `/api/agent/run` | Generate and persist a new retention agent run |
+| `POST` | `/api/agent/:runId/resume` | Resume saved approved actions in simulation |
+| `POST` | `/api/agent/:runId/goal-evaluation` | Evaluate measurable goal for a saved run |
+| `GET` | `/api/agent/history?businessId=...` | Paginated agent/execution events |
+| `GET` | `/api/approvals/approved` | Approved actions |
+| `GET` | `/api/approvals/history` | Simulated execution history |
+| `GET` | `/api/analytics?businessId=...` | Business metrics and transaction trends |
 
-Other routes support customers, agent runs, approvals and simulated execution; **refer to `backend/src/routes/` for their exact methods, paths and request contracts**.
+> Some request contracts depend on the user's authentication and current business context. Use the actual client requests/network inspector as the source of truth; IDs and credentials in this README are not a reusable login.
 
-#### Example: analytics response shape
+## Persistence and safety model
 
-```json
-{
-  "success": true,
-  "message": "Business analytics fetched successfully",
-  "data": {
-    "business": { "id": "<business-uuid>", "name": "Arun Digital Services", "owner_name": "Arun" },
-    "summary": {
-      "totalCustomers": 40,
-      "totalTransactions": 200,
-      "completedTransactions": 200,
-      "totalRevenue": 4760,
-      "totalTransactionValue": 190380,
-      "customersWithCompletedTransactions": 40
-    },
-    "monthlyTrends": [
-      {
-        "month": "2026-10",
-        "totalTransactions": 84,
-        "completedTransactions": 84,
-        "totalRevenue": 2412.68,
-        "totalTransactionValue": 96499,
-        "completionRate": 100
-      }
-    ],
-    "generatedAt": "<ISO-8601-timestamp>"
-  }
-}
+- **Checkpointing:** agent runs, steps and actions are persisted, permitting a later resume call after backend restart.
+- **Human handoff:** execution waits for approval. Actions with missing/invalid saved drafts are blocked and returned for manual review.
+- **Retry handling:** completed actions are skipped; in the observed retry test, a single simulated delivery remained stored.
+- **Business boundaries:** authenticated API routes and business membership checks restrict access; approved execution requires appropriate role.
+- **Fallback:** deterministic planning is used when local model enrichment fails; it cannot bypass approval.
+- **Auditability:** logs and event history preserve what the system did, including fallback decisions.
+- **Limits:** one observed idempotent retry does not establish exactly-once guarantees under concurrent workers or crash-mid-write scenarios.
+
+## Repository structure
+
+```text
+growpilot-ai/
+├── frontend/
+│   └── src/
+│       ├── app/
+│       │   └── (dashboard)/
+│       │       ├── page.tsx
+│       │       ├── customers/
+│       │       ├── agent/
+│       │       ├── approvals/
+│       │       ├── analytics/
+│       │       ├── insights/
+│       │       ├── history/
+│       │       └── settings/
+│       ├── features/
+│       └── lib/
+├── backend/
+│   └── src/
+│       ├── agent/
+│       ├── routes/
+│       ├── controllers/
+│       └── services/
+├── docs/
+│   └── EVALUATION.md
+└── README.md
 ```
 
-*Illustrative abbreviated response based on the development demo data; actual data changes with the database.*
+This diagram lists significant folders, not every source file.
 
-## 🧠 The AI + approval workflow
+## Limitations
 
-```mermaid
-flowchart LR
-    DATA["Customer / Transaction Data"] --> RUN["Run Agent"]
-    RUN --> PLAN["Prioritized Recommendations"]
-    PLAN --> REVIEW["Arun Reviews Action"]
-    REVIEW --> DRAFT["Generate / Regenerate Draft"]
-    DRAFT --> DECISION{"Approve?"}
-    DECISION -->|No| REJECT["Reject / Keep Out of Execution"]
-    DECISION -->|Yes| APPROVED["Approved Action"]
-    APPROVED --> SIM["Simulated Execution"]
-    SIM --> HISTORY["History / Audit Trail"]
-```
+1. **Synthetic business data** only; simulated messages have no real customer-delivery or response signal.
+2. **Causality not established:** 72% is an observed synthetic-data metric, not an AI-driven improvement over a validated 20% historical baseline.
+3. **No live messaging** or consent-verified production outreach.
+4. **No proven concurrency safety** or fully transactional, exactly-once guarantees for all failure modes.
+5. **No fully autonomous continuous monitoring loop** demonstrated; user actions initiate parts of the workflow.
+6. **Incomplete fresh-clone reproducibility** until database schema, seed/migrations, verified environment examples and login setup are packaged and exercised.
+7. **Incomplete cost telemetry** for precise model token usage, compute and provider comparisons.
 
-The local model helps create suggested actions and message drafts. **The application is intentionally human-in-the-loop**: Arun reviews AI output, chooses the action, and only then can simulate an approved execution.
+## Roadmap and project status
 
-**AI safety / quality note:** Generated text may be inaccurate or inappropriate. Always inspect recommendations and message content before approval; a future production system would need consent checks, templates, delivery integrations, monitoring, and stricter safeguards.
+**Implemented in the current prototype:** dashboard, customers, agent, approvals, analytics, insights, history, settings, authenticated business-scoped workflow, checkpointed worker resume, deterministic fallback, goal evaluation and simulation audit records.
 
-## 🧪 Demo data and scope
+**Before production:** complete reproducible database setup, automated integration/concurrency tests, consent and communication controls, proper outreach provider integrations, metrics baselines and attribution, operational monitoring, deployment hardening and ongoing replanning policy.
 
-This project's current seeded development dataset includes approximately:
+## Documentation and submission
 
-| Demo entity | Count |
-|---|---:|
-| Customers | **40** |
-| Transactions | **200** |
-| Completed transactions | **200** |
+- [Evaluation report](docs/EVALUATION.md) — successful execution, failure cases, limitations, retry evidence.
+- Architecture diagram — included above; can be exported as an image for the submission.
+- Demo walkthrough — follow [Demonstration](#demonstration) and capture UI plus run-level traces.
+- Learning note, demo video URL, and verified `.env.example` + synthetic seed setup — **to be added before final submission**; do not mark them complete prematurely.
 
-The dataset illustrates features and should not be treated as a real production business performance report. Sample business metrics and AI output depend on the local database state.
+## Responsible use
 
-## 🛠️ Development status
-
-| Module | Status |
-|---|---|
-| Dashboard | ✅ Implemented |
-| Customers | ✅ Implemented |
-| AI Agent | ✅ Implemented |
-| Approvals | ✅ Implemented |
-| Analytics | ✅ Implemented |
-| AI Insights page (`/insights`) | 🚧 Planned — backend endpoint exists |
-| History page (`/history`) | 🚧 Planned — history exists within feature pages |
-| Settings page (`/settings`) | 🚧 Planned |
-| Final cross-browser / end-to-end QA | 🚧 Pending |
-| Real outbound messaging | ⛔ Not implemented; simulation only |
-
-> The sidebar already contains links to **Insights**, **History**, and **Settings**. These are planned destinations and may show 404 until their pages are created.
-
-## 🗺️ Roadmap
-
-- [ ] Build the dedicated **AI Insights** page.
-- [ ] Build a unified **History** page for easy audit exploration.
-- [ ] Build the **Settings** page for relevant business/app configuration.
-- [ ] Complete end-to-end testing across desktop and mobile.
-- [ ] Add automated tests and CI checks.
-- [ ] Document database schema and environment setup using safe `.env.example` templates.
-- [ ] Review security, permissions, and consent requirements before any production rollout.
-
-## 🔐 Security and responsible use
-
-- Environment secrets must never be committed to source control.
-- This demo is **simulation-only**; no real outreach should be inferred from execution history.
-- AI content is advisory and requires human review.
-- Customer data, consent, and communication preferences would require proper access controls and governance for real-world use.
-- Frontend code should never contain privileged Supabase credentials.
-
-## ❓ Frequently asked questions
-
-<details>
-<summary><b>Does GrowPilot AI send actual customer messages?</b></summary>
-
-No. Currently, execution is simulated so the team can demonstrate an approval and audit trail safely.
-
-</details>
-
-<details>
-<summary><b>Is it using a hosted AI API?</b></summary>
-
-The development setup uses **Ollama** with **qwen2.5:3b** locally. Backend services call the model as part of the AI workflow.
-
-</details>
-
-<details>
-<summary><b>Does the AI approve actions automatically?</b></summary>
-
-No. The owner reviews and explicitly approves or rejects proposed actions.
-
-</details>
-
-<details>
-<summary><b>Why are service-fee revenue and transaction value different?</b></summary>
-
-Service-fee revenue represents the business fee earned. Transaction value represents the larger total value of processed transactions. The analytics page shows these separately to avoid conflating them.
-
-</details>
-
-<details>
-<summary><b>Can I deploy this directly to production?</b></summary>
-
-Not yet. It is an actively developed demo that needs deployment configuration, authorization/consent controls, automated testing, operational monitoring, and a real messaging integration only when legally and operationally appropriate.
-
-</details>
+GrowPilot AI is a **development demonstration**, not a ready-to-deploy customer marketing system or a validated business-growth claim. AI output should be reviewed, sensitive credentials kept server-side, personal data protected, and actual customer outreach enabled only after consent, authorization and operational safeguards are implemented.
 
 ---
 
 <div align="center">
 
-### 🌱 Grow smarter. Retain better. Stay in control.
+**🌱 Grow smarter. Retain better. Stay in control.**
 
-**GrowPilot AI** — built to make AI-assisted retention more understandable, reviewable, and actionable for small businesses.
-
-<sub>Full-stack portfolio / development project · Active development</sub>
+*GrowPilot AI — goal-driven automation with human accountability.*
 
 </div>

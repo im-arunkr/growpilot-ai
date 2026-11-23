@@ -1,11 +1,11 @@
 
 import { randomUUID } from "node:crypto";
-
+import { getGoalProgress } from "../services/goalProgress.service.js";
 import {
   executeTool,
   getAvailableTools,
 } from "./toolRegistry.js";
-
+import { supabase } from "../config/supabase.js";
 import {
   createAgentPlan,
   enrichActionPlanWithAI,
@@ -39,6 +39,7 @@ const SUPPORTED_GOALS = {
 
 export async function runAgent({
   businessId,
+  goalId = null,
   goal = "customer_retention",
   limit = 20,
 }) {
@@ -75,6 +76,52 @@ export async function runAgent({
       throw new Error("Business not found");
     }
 
+
+    // Resolve exact goal when goalId is provided.
+    let goalQuery = supabase
+      .from("agent_goals")
+      .select(
+        "id, title, goal_type, target_metric, baseline_value, target_value, due_at"
+      )
+      .eq("business_id", businessId)
+      .eq("goal_type", goal)
+      .eq("status", "active");
+
+    if (goalId) {
+      goalQuery = goalQuery.eq("id", goalId);
+    }
+
+    const { data: activeGoal, error: goalError } =
+      await goalQuery
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (goalError) throw goalError;
+
+    if (!activeGoal) {
+      throw new Error(
+        "No matching active business goal found"
+      );
+    }
+
+    // Measure goal progress before planning.
+    const goalProgress = await getGoalProgress({
+      businessId,
+      goalId: activeGoal.id,
+    });
+
+    addStep("goal_progress_measured", "completed", {
+      goalId: activeGoal.id,
+      metric: goalProgress.metric,
+      baseline: goalProgress.baseline,
+      target: goalProgress.target,
+      actual: goalProgress.actual,
+      progressPercentage:
+        goalProgress.progressPercentage,
+      targetReached: goalProgress.targetReached,
+    });
+
     // 3. Select registered tool
     addStep("tool_selected", "completed", {
       tool: goalConfig.tool,
@@ -104,6 +151,7 @@ export async function runAgent({
       businessId,
       opportunities,
       maxActions: limit,
+      goalProgress,
     });
 
     addStep("action_plan_created", "completed", {
@@ -121,6 +169,7 @@ export async function runAgent({
       actionPlan: basePlan,
       opportunities,
       businessName: business.name,
+      goalProgress,
     });
 
     const aiMetadata = actionPlan.aiMetadata;
@@ -144,18 +193,20 @@ export async function runAgent({
     const persistence = await saveAgentExecution({
       runId,
       businessId,
+      goalId: activeGoal.id,
       goal,
+      goalProgress,
       actionPlan,
       steps,
       summary: toolResult.result.summary,
     });
-
     // 9. Return execution results
     return {
       success: true,
       runId,
       goal,
       businessId,
+      goalProgress,
       status: "awaiting_approval",
 
       persisted: persistence.persisted,

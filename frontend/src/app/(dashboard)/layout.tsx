@@ -2,9 +2,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { Loader2, ShieldCheck } from "lucide-react";
+
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { AppHeader } from "@/components/layout/app-header";
+import { useAuth } from "@/providers/auth-provider";
 
 export default function DashboardLayout({
   children,
@@ -15,9 +18,27 @@ export default function DashboardLayout({
     useState(false);
 
   const pathname = usePathname();
+  const router = useRouter();
 
+  const { user, loading } = useAuth();
+
+  // Redirect unauthenticated users to Login.
   useEffect(() => {
-    if (!mobileMenuOpen) return;
+    if (!loading && !user) {
+      router.replace("/login");
+    }
+  }, [loading, user, router]);
+
+  // Close mobile navigation on route changes.
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
+
+  // Manage mobile menu keyboard and body scroll.
+  useEffect(() => {
+    if (!mobileMenuOpen || loading || !user) {
+      return;
+    }
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -32,19 +53,21 @@ export default function DashboardLayout({
 
     return () => {
       document.body.style.overflow = previousOverflow;
+
       window.removeEventListener(
         "keydown",
         handleEscape
       );
     };
-  }, [mobileMenuOpen]);
+  }, [mobileMenuOpen, loading, user]);
 
+  // Close mobile menu when switching to desktop.
   useEffect(() => {
-    const closeOnDesktop = () => {
+    function closeOnDesktop() {
       if (window.innerWidth >= 1024) {
         setMobileMenuOpen(false);
       }
-    };
+    }
 
     window.addEventListener("resize", closeOnDesktop);
 
@@ -55,6 +78,38 @@ export default function DashboardLayout({
       );
     };
   }, []);
+
+  // Wait until Supabase restores the session.
+  if (loading) {
+    return (
+      <div
+        role="status"
+        className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-50"
+      >
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+
+        <p className="text-sm font-medium text-slate-600">
+          Verifying your session...
+        </p>
+      </div>
+    );
+  }
+
+  // Prevent protected UI from rendering before redirect.
+  if (!user) {
+    return (
+      <div
+        role="status"
+        className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-50"
+      >
+        <ShieldCheck className="h-8 w-8 text-blue-600" />
+
+        <p className="text-sm font-medium text-slate-600">
+          Redirecting to sign in...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-dvh bg-slate-50">
@@ -69,7 +124,6 @@ export default function DashboardLayout({
           role="dialog"
           aria-modal="true"
           aria-label="Mobile navigation"
-          key={pathname}
         >
           <button
             type="button"

@@ -1,17 +1,16 @@
 
 import { z } from "zod";
 import { routeAIRequest } from "./modelRouter.js";
+
 /**
- * GrowPilot AI — Agent Planner
+ * GrowPilot AI — Goal-Aware Agent Planner
  *
- * Responsibilities:
- * - Convert retention opportunities into action plans
- * - Prioritize customer actions
- * - Define expected outcomes
- * - Enforce human approval requirements
- *
- * Current version: Deterministic planning
- * AI model reasoning will be integrated later.
+ * - Prioritizes customer retention opportunities
+ * - Uses measurable business goal context
+ * - Generates deterministic action plans
+ * - Enhances the top action using Ollama
+ * - Falls back safely if inference fails
+ * - Never sends messages automatically
  */
 
 const ACTION_CONFIG = {
@@ -20,7 +19,6 @@ const ACTION_CONFIG = {
     title: "Customer Re-engagement",
     objective: "Encourage inactive customers to return",
   },
-
   declining: {
     actionType: "send_message",
     title: "Customer Retention Follow-up",
@@ -28,13 +26,88 @@ const ACTION_CONFIG = {
   },
 };
 
+const PRIORITY_WEIGHT = {
+  high: 30,
+  medium: 15,
+  low: 5,
+};
+
+function round(value, digits = 2) {
+  const factor = 10 ** digits;
+  return Math.round(Number(value) * factor) / factor;
+}
+
+function buildGoalContext(goalProgress) {
+  if (!goalProgress || goalProgress.status === "unsupported_metric") {
+    return {
+      measurable: false,
+      reason: "Goal progress metric unavailable",
+    };
+  }
+
+  return {
+    measurable: goalProgress.actual !== null &&
+      goalProgress.target !== null,
+    goalId: goalProgress.goalId,
+    metric: goalProgress.metric,
+    unit: goalProgress.unit,
+    baseline: goalProgress.baseline,
+    actual: goalProgress.actual,
+    target: goalProgress.target,
+    remainingGap: goalProgress.remainingGap,
+    progressPercentage: goalProgress.progressPercentage,
+    targetReached: goalProgress.targetReached,
+    overdue: goalProgress.overdue,
+    dueAt: goalProgress.dueAt,
+    measurementWindow: goalProgress.measurementWindow,
+  };
+}
+
 /**
- * Generate a structured retention plan.
+ * Produce a transparent prioritization score.
+ *
+ * The score is a ranking heuristic,
+ * not a trained churn probability.
+ */
+function calculateOpportunityScore(customer) {
+  const originalScore = Number(customer.priorityScore ?? 0);
+  const safeOriginalScore = Number.isFinite(originalScore)
+    ? originalScore
+    : 0;
+
+  const priority = PRIORITY_WEIGHT[customer.priority] ?? 0;
+  const inactiveDays = Math.max(
+    0,
+    Number(customer.inactiveDays) || 0
+  );
+
+  const transactions = Math.max(
+    0,
+    Number(customer.totalTransactions) || 0
+  );
+
+  const inactivityContribution =
+    Math.min(inactiveDays, 90) * 0.1;
+
+  const loyaltyContribution =
+    Math.min(transactions, 20) * 0.5;
+
+  return round(
+    safeOriginalScore +
+    priority +
+    inactivityContribution +
+    loyaltyContribution
+  );
+}
+
+/**
+ * Generate a structured, goal-aware retention plan.
  */
 export function createAgentPlan({
   businessId,
   opportunities = [],
   maxActions = 10,
+  goalProgress = null,
 }) {
   if (!businessId || typeof businessId !== "string") {
     throw new Error("Valid businessId is required");
@@ -52,21 +125,43 @@ export function createAgentPlan({
     throw new Error("maxActions must be between 1 and 100");
   }
 
-  const validOpportunities = opportunities
+  const goalContext = buildGoalContext(goalProgress);
+
+  // Do not propose unnecessary interventions if
+  // the business goal has already been reached.
+  const targetReached = goalContext.targetReached === true;
+
+  const rankedOpportunities = opportunities
     .filter(
       (customer) =>
         customer.customerId &&
         ACTION_CONFIG[customer.status]
     )
+    .map((customer) => ({
+      ...customer,
+      calculatedScore: calculateOpportunityScore(customer),
+    }))
     .sort(
       (a, b) =>
-        (b.priorityScore ?? 0) -
-        (a.priorityScore ?? 0)
-    )
-    .slice(0, maxActions);
+        b.calculatedScore - a.calculatedScore ||
+        String(a.customerId).localeCompare(
+          String(b.customerId)
+        )
+    );
 
-  const actions = validOpportunities.map((customer) => {
+  const selectedOpportunities = targetReached
+    ? []
+    : rankedOpportunities.slice(0, maxActions);
+
+  const actions = selectedOpportunities.map((customer) => {
     const config = ACTION_CONFIG[customer.status];
+
+    const metricExplanation =
+      goalContext.measurable
+        ? `Current ${goalContext.metric}: ` +
+          `${goalContext.actual} ${goalContext.unit}. ` +
+          `Target: ${goalContext.target} ${goalContext.unit}.`
+        : "Business goal measurement is unavailable.";
 
     return {
       customerId: customer.customerId,
@@ -76,27 +171,29 @@ export function createAgentPlan({
       title: config.title,
 
       priority: customer.priority,
-      priorityScore: customer.priorityScore,
+      priorityScore: customer.calculatedScore,
 
       rationale:
         `${customer.customerName} has not completed a ` +
         `transaction for ${customer.inactiveDays} days. ` +
-        `Historical transactions: ${customer.totalTransactions}.`,
+        `Historical transactions: ${customer.totalTransactions}. ` +
+        metricExplanation,
 
       objective: config.objective,
-
       recommendedAction: customer.recommendedAction,
 
       expectedOutcome:
-        "Encourage the customer to make a repeat transaction",
+        "Potential repeat transaction opportunity. " +
+        "Actual retention or revenue impact must be measured " +
+        "after the intervention.",
+
+      goalMetric: goalContext.metric ?? null,
 
       channel: "simulation",
-
       requiresApproval: true,
       status: "proposed",
 
       marketingConsent: customer.marketingConsent,
-
       executionAllowed: false,
     };
   });
@@ -117,42 +214,45 @@ export function createAgentPlan({
     ).length,
 
     pendingApproval: actions.length,
+    goalTargetReached: targetReached,
+    remainingGoalGap: goalContext.remainingGap ?? null,
   };
 
   return {
     businessId,
+    goalId: goalContext.goalId ?? null,
+    goalContext,
+
     planType: "customer_retention",
+    title: "Goal-Driven Customer Retention Plan",
 
-    title: "Customer Retention Growth Plan",
-
-    objective:
-      "Improve customer retention and identify opportunities " +
-      "to increase repeat transactions.",
+    objective: targetReached
+      ? "Business goal has already reached its target. " +
+        "No new retention actions are required."
+      : "Prioritize customer retention opportunities " +
+        "to support the measurable business goal.",
 
     summary,
     actions,
 
-    requiresHumanApproval: true,
+    requiresHumanApproval: actions.length > 0,
     executionMode: "simulation",
+    status: targetReached ? "goal_reached" : "proposed",
 
-    status: "proposed",
+    prioritizationMethod:
+      "Deterministic priority, inactivity and historical transaction ranking",
+
+    impactMeasurement:
+      "Actual improvement requires future transaction evidence; " +
+      "simulated messages are not treated as customer responses.",
+
     generatedAt: new Date().toISOString(),
   };
 }
 
-/**
- * GrowPilot AI — AI-Assisted Action Planning
- *
- * Enriches the highest-priority action with an
- * AI-generated retention strategy.
- *
- * Safety:
- * - Keeps deterministic customer prioritization
- * - Validates AI output
- * - Blocks unsupported recommendations
- * - Uses a safe fallback on AI failure
- * - Never executes customer messages
- */
+// ======================================================
+// AI STRATEGY ENRICHMENT
+// ======================================================
 
 const aiStrategySchema = z.object({
   reason: z.string().trim().min(10),
@@ -175,7 +275,12 @@ const unsafePatterns = [
   /\bcontact issues?\b/i,
 ];
 
-function createSafeStrategy(customer) {
+function createSafeStrategy(customer, goalContext) {
+  const goalExplanation = goalContext?.measurable
+    ? `The business is working toward ${goalContext.target} ` +
+      `${goalContext.unit} for ${goalContext.metric}.`
+    : "The business is working to improve customer retention.";
+
   return {
     reason:
       `${customer.customerName} has not completed a ` +
@@ -183,10 +288,11 @@ function createSafeStrategy(customer) {
 
     strategy:
       "Prepare a personalized re-engagement message " +
-      "for owner review using simulation only.",
+      "for owner review using simulation only. " +
+      goalExplanation,
 
     expectedOutcome:
-      "A possible customer re-engagement opportunity. " +
+      "A possible repeat transaction opportunity. " +
       "Actual business impact has not been measured.",
 
     priority: customer.priority,
@@ -198,6 +304,7 @@ export async function enrichActionPlanWithAI({
   actionPlan,
   opportunities,
   businessName,
+  goalProgress = null,
 }) {
   if (!actionPlan || !Array.isArray(actionPlan.actions)) {
     throw new Error("Valid action plan is required");
@@ -207,7 +314,6 @@ export async function enrichActionPlanWithAI({
     throw new Error("Opportunities must be an array");
   }
 
-  // Only one AI call to keep local inference fast.
   const topAction = actionPlan.actions[0];
 
   if (!topAction) {
@@ -215,7 +321,13 @@ export async function enrichActionPlanWithAI({
       ...actionPlan,
       aiMetadata: {
         used: false,
-        reason: "No actions available",
+        provider: null,
+        model: null,
+        latencyMs: null,
+        strategySource: "not_required",
+        guardrailTriggered: false,
+        fallbackReason: "No actions available",
+        aiEnhancedActions: 0,
       },
     };
   }
@@ -228,7 +340,9 @@ export async function enrichActionPlanWithAI({
     throw new Error("Opportunity data not found");
   }
 
-  let strategy = createSafeStrategy(customer);
+  const goalContext = buildGoalContext(goalProgress);
+
+  let strategy = createSafeStrategy(customer, goalContext);
   let source = "deterministic_fallback";
   let model = null;
   let latencyMs = null;
@@ -240,6 +354,9 @@ export async function enrichActionPlanWithAI({
       task: "retention_strategy",
       data: {
         businessName,
+
+        goal: goalContext,
+
         customer: {
           customerName: customer.customerName,
           status: customer.status,
@@ -282,7 +399,6 @@ export async function enrichActionPlanWithAI({
     } else {
       fallbackReason = "AI safety guardrail triggered";
     }
-
   } catch (error) {
     fallbackReason = error.message;
 
@@ -292,7 +408,6 @@ export async function enrichActionPlanWithAI({
     );
   }
 
-  // Enrich the first action without modifying the original.
   const enrichedActions = actionPlan.actions.map(
     (action, index) => {
       if (index !== 0) return action;

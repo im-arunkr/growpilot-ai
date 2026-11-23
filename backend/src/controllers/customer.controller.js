@@ -1,24 +1,49 @@
 
 import { z } from "zod";
+
 import { getCustomerRetention } from "../services/retention.service.js";
+
 import {
   getCustomers,
   getCustomerById,
   getCustomerTransactions,
 } from "../services/customer.service.js";
 
-const uuidSchema = z.string().regex(
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-  "Invalid UUID format"
-);
+const uuidSchema = z.string().uuid();
 
 const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
 });
 
+/**
+ * Resolve only the business ID verified by
+ * requireBusinessAccess middleware.
+ */
+function getAuthorizedBusinessId(req) {
+  if (!req.user?.id || !req.business?.id) {
+    return null;
+  }
+
+  return req.business.id;
+}
+
+/**
+ * GET /api/customers
+ *
+ * Business-scoped customer listing.
+ */
 export async function listCustomers(req, res, next) {
   try {
+    const businessId = getAuthorizedBusinessId(req);
+
+    if (!businessId) {
+      return res.status(403).json({
+        success: false,
+        message: "Business authorization required",
+      });
+    }
+
     const querySchema = paginationSchema.extend({
       businessId: uuidSchema,
       search: z.string().max(100).default(""),
@@ -33,9 +58,12 @@ export async function listCustomers(req, res, next) {
       });
     }
 
-    const result = await getCustomers(parsed.data);
+    const result = await getCustomers({
+      ...parsed.data,
+      businessId,
+    });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: result.customers,
       pagination: result.pagination,
@@ -45,8 +73,22 @@ export async function listCustomers(req, res, next) {
   }
 }
 
+/**
+ * GET /api/customers/:id
+ *
+ * Prevents cross-business customer access.
+ */
 export async function getCustomer(req, res, next) {
   try {
+    const businessId = getAuthorizedBusinessId(req);
+
+    if (!businessId) {
+      return res.status(403).json({
+        success: false,
+        message: "Business authorization required",
+      });
+    }
+
     const parsed = uuidSchema.safeParse(req.params.id);
 
     if (!parsed.success) {
@@ -56,16 +98,24 @@ export async function getCustomer(req, res, next) {
       });
     }
 
-    const customer = await getCustomerById(parsed.data);
+  const customer = await getCustomerById(
+  parsed.data,
+  businessId
+);
 
-    if (!customer) {
+    if (
+      !customer ||
+      typeof customer.business_id !== "string" ||
+      customer.business_id.toLowerCase() !==
+      businessId.toLowerCase()
+    ) {
       return res.status(404).json({
         success: false,
         message: "Customer not found",
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: customer,
     });
@@ -74,21 +124,53 @@ export async function getCustomer(req, res, next) {
   }
 }
 
-export async function listCustomerTransactions(req, res, next) {
+/**
+ * GET /api/customers/:id/transactions
+ *
+ * Confirms customer ownership before returning
+ * transaction history.
+ */
+export async function listCustomerTransactions(
+  req,
+  res,
+  next
+) {
   try {
+    const businessId = getAuthorizedBusinessId(req);
+
+    if (!businessId) {
+      return res.status(403).json({
+        success: false,
+        message: "Business authorization required",
+      });
+    }
+
     const id = uuidSchema.safeParse(req.params.id);
-    const pagination = paginationSchema.safeParse(req.query);
+
+    const querySchema = paginationSchema.extend({
+      businessId: uuidSchema,
+    });
+
+    const pagination = querySchema.safeParse(req.query);
 
     if (!id.success || !pagination.success) {
       return res.status(400).json({
         success: false,
-        message: "Invalid customer ID or pagination",
+        message: "Invalid customer ID or query parameters",
       });
     }
 
-    const customer = await getCustomerById(id.data);
+const customer = await getCustomerById(
+  parsed.data,
+  businessId
+);
 
-    if (!customer) {
+    if (
+      !customer ||
+      typeof customer.business_id !== "string" ||
+      customer.business_id.toLowerCase() !==
+      businessId.toLowerCase()
+    ) {
       return res.status(404).json({
         success: false,
         message: "Customer not found",
@@ -97,10 +179,14 @@ export async function listCustomerTransactions(req, res, next) {
 
     const result = await getCustomerTransactions(
       id.data,
-      pagination.data
+      businessId,
+      {
+        page: pagination.data.page,
+        limit: pagination.data.limit,
+      }
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: result.transactions,
       pagination: result.pagination,
@@ -110,25 +196,35 @@ export async function listCustomerTransactions(req, res, next) {
   }
 }
 
-export async function getRetentionAnalysis(req, res, next) {
+/**
+ * GET /api/customers/retention/analysis
+ *
+ * Uses the authorized business context.
+ */
+export async function getRetentionAnalysis(
+  req,
+  res,
+  next
+) {
   try {
-    const parsed = uuidSchema.safeParse(req.query.businessId);
+    const businessId = getAuthorizedBusinessId(req);
 
-    if (!parsed.success) {
-      return res.status(400).json({
+    if (!businessId) {
+      return res.status(403).json({
         success: false,
-        message: "Valid businessId is required",
+        message: "Business authorization required",
       });
     }
 
-    const analysis = await getCustomerRetention(parsed.data);
+    const analysis = await getCustomerRetention(
+      businessId
+    );
 
     return res.status(200).json({
       success: true,
       message: "Customer retention analysis completed",
       data: analysis,
     });
-
   } catch (error) {
     if (error.message === "Business not found") {
       return res.status(404).json({

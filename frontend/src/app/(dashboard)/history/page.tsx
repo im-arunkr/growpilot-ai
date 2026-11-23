@@ -322,6 +322,266 @@ const tabs: {
   },
 ];
 
+function WorkerEvidencePanel({
+  events,
+}: {
+  events: AgentHistoryEvent[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const getDetails = (event: AgentHistoryEvent) => {
+    const value = event.details;
+
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      return value as Record<string, unknown>;
+    }
+
+    return {} as Record<string, unknown>;
+  };
+
+  const evidence = events.map((event) => ({
+    event,
+    details: getDetails(event),
+  }));
+
+  // Match the existing logged event names.
+  const modelEvents = evidence.filter(
+    ({ event, details }) =>
+      event.event_type === "ai_reasoning_completed" ||
+      details.strategySource === "deterministic_fallback"
+  );
+
+  const fallbackEvents = modelEvents.filter(
+    ({ details }) =>
+      details.strategySource === "deterministic_fallback"
+  );
+
+  const toolEvents = evidence.filter(
+    ({ event, details }) =>
+      event.event_type === "tool_executed" ||
+      (Boolean(event.tool_name) &&
+        details.durationMs !== undefined)
+  );
+
+  const approvalEvents = evidence.filter(
+    ({ event }) =>
+      ["action_approved", "action_rejected"].includes(
+        event.event_type
+      )
+  );
+
+  const resumeEvents = evidence.filter(
+    ({ event }) =>
+      event.event_type === "agent_run_resumed"
+  );
+
+  const evaluationEvents = evidence.filter(
+    ({ event }) =>
+      event.event_type === "goal_evaluated"
+  );
+
+  const cards = [
+    {
+      label: "Model Fallbacks",
+      value: fallbackEvents.length,
+      color: "text-amber-700",
+    },
+    {
+      label: "Tool Events",
+      value: toolEvents.length,
+      color: "text-blue-700",
+    },
+    {
+      label: "Human Decisions",
+      value: approvalEvents.length,
+      color: "text-indigo-700",
+    },
+    {
+      label: "Resume Events",
+      value: resumeEvents.length,
+      color: "text-emerald-700",
+    },
+  ];
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <Bot className="h-5 w-5 text-blue-600" />
+
+            <h2 className="text-lg font-bold text-slate-900">
+              AI Worker Execution Evidence
+            </h2>
+          </div>
+
+          <p className="mt-2 text-sm text-slate-500">
+            Model decisions, tool activity, human
+            handoffs and evaluation traces.
+          </p>
+        </div>
+
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+          Current Log Page
+        </span>
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {cards.map((card) => (
+          <div
+            key={card.label}
+            className="rounded-xl bg-slate-50 p-4"
+          >
+            <p className="text-xs text-slate-500">
+              {card.label}
+            </p>
+
+            <p
+              className={`mt-2 text-2xl font-bold ${card.color}`}
+            >
+              {card.value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700">
+          Model Decisions: {modelEvents.length}
+        </span>
+
+        <span className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
+          Goal Evaluations: {evaluationEvents.length}
+        </span>
+      </div>
+
+      {fallbackEvents.length > 0 && (
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-700" />
+
+            <h3 className="text-sm font-semibold text-amber-900">
+              AI Fallback Evidence
+            </h3>
+          </div>
+
+          {fallbackEvents.slice(0, 3).map(
+            ({ event, details }) => (
+              <div
+                key={event.id}
+                className="mt-3 border-t border-amber-200 pt-3"
+              >
+                <p className="break-all font-mono text-xs text-amber-800">
+                  Run: {event.run_id}
+                </p>
+
+                <p className="mt-2 text-xs text-amber-900">
+                  Strategy: Deterministic Fallback
+                </p>
+
+                <p className="mt-1 break-words text-xs text-amber-800">
+                  Reason:{" "}
+                  {typeof details.fallbackReason === "string"
+                    ? details.fallbackReason
+                    : "Model unavailable or output rejected"}
+                </p>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="mt-5 inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+      >
+        {expanded ? "Hide Evidence" : "View Evidence"}
+
+        {expanded ? (
+          <ChevronUp className="h-4 w-4" />
+        ) : (
+          <ChevronDown className="h-4 w-4" />
+        )}
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-3">
+          {evidence.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              No execution events found on this page.
+            </p>
+          ) : (
+            evidence.map(({ event, details }) => (
+              <div
+                key={event.id}
+                className="rounded-xl border border-slate-200 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {formatLabel(event.event_type)}
+                  </p>
+
+                  <StatusBadge status={event.severity} />
+                </div>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  {formatDate(event.created_at)}
+                </p>
+
+                <p className="mt-2 break-all font-mono text-xs text-slate-500">
+                  Run: {event.run_id}
+                </p>
+
+                {event.tool_name && (
+                  <p className="mt-2 text-xs text-slate-700">
+                    Tool: {event.tool_name}
+                  </p>
+                )}
+
+                {event.model_name && (
+                  <p className="mt-1 text-xs text-slate-700">
+                    Model: {event.model_name}
+                  </p>
+                )}
+
+                {typeof details.strategySource === "string" && (
+                  <p className="mt-1 text-xs text-slate-700">
+                    Strategy: {details.strategySource}
+                  </p>
+                )}
+
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-blue-700">
+                    View Raw Trace
+                  </summary>
+
+                  <div className="mt-3">
+                    <JsonDetails value={details} />
+                  </div>
+                </details>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      <p className="mt-5 text-xs leading-5 text-slate-500">
+        Evidence is derived from persisted execution logs
+        on the currently loaded page, not the complete
+        business history. Missing events do not imply
+        that an action never occurred. Simulated message
+        execution is not proof of actual business growth.
+      </p>
+    </section>
+  );
+}
+
 export default function HistoryPage() {
   const [activeTab, setActiveTab] =
     useState<HistoryTab>("agent");
@@ -555,7 +815,10 @@ export default function HistoryPage() {
           Refresh
         </button>
       </div>
-
+{/* AI Worker execution evidence */}
+{activeTab === "agent" && (
+  <WorkerEvidencePanel events={agentEvents} />
+)}
       {/* Tab Navigation */}
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
         <div
