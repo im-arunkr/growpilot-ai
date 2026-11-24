@@ -1,10 +1,11 @@
 
 import { supabase } from "../config/supabase.js";
-
+import { orchestrateReplanning } from "./replanningOrchestrator.service.js";
 import { executeApprovedMessage } from "../tools/sendMessage.js";
-
+import { getReplanningEvidence } from "./replanningEvidence.service.js";
 import { syncAgentRunStatus } from "./runLifecycle.service.js";
 import { evaluateAgentGoal } from "./goalEvaluation.service.js";
+import { decideNextWorkerStep } from "./replanningDecision.service.js";
 /**
  * GrowPilot AI — Autonomous Resume Executor
  *
@@ -215,6 +216,36 @@ export async function resumeAgentRun({
 
     results.evaluation = null;
 
+    // Read previous evaluation evidence before
+    // evaluateAgentGoal updates the saved record.
+    results.replanningEvidence = {
+        newBusinessEvidence: false,
+        previousEvaluationAt: null,
+        newCompletedTransactions: 0,
+        reason: "Evidence check not yet performed.",
+    };
+
+    try {
+        results.replanningEvidence =
+            await getReplanningEvidence({
+                businessId,
+                runId,
+            });
+    } catch (error) {
+        console.error(
+            "Replanning evidence check failed:",
+            error.message
+        );
+
+        results.replanningEvidence = {
+            newBusinessEvidence: false,
+            previousEvaluationAt: null,
+            newCompletedTransactions: 0,
+            reason:
+                "Evidence check failed; replanning blocked.",
+        };
+    }
+
     const hasCompletedActions =
         (lifecycle.actionSummary?.completed ?? 0) > 0;
 
@@ -242,6 +273,79 @@ export async function resumeAgentRun({
                     "Goal evaluation failed. Saved execution state is preserved.",
             };
         }
+    }
+
+    // 5. Decide what the worker should do next.
+    // This phase makes a decision only.
+    // It does not create or execute new actions.
+
+    results.nextDecision = decideNextWorkerStep({
+        evaluation: results.evaluation,
+
+        actionSummary: lifecycle.actionSummary ?? {},
+
+        // Conservative default:
+        // We have not yet implemented a verified
+        // new-transaction evidence detector.
+        newBusinessEvidence:
+            results.replanningEvidence.newBusinessEvidence,
+
+        replanCount: 0,
+        maxReplans: 3,
+    });
+
+    // 6. Autonomous feedback-driven replanning.
+    //
+    // Replanning is allowed only when:
+    // - the goal is still below target
+    // - new business evidence exists
+    // - earlier actions are resolved
+    // - no recovery or execution failures remain
+    //
+    // All successor actions still require approval.
+
+    results.replanning = {
+        started: false,
+        reason: "Replanning not required",
+    };
+
+    const canStartReplanning =
+        results.nextDecision?.shouldReplan === true &&
+        results.replanningEvidence?.newBusinessEvidence === true &&
+        results.failed.length === 0 &&
+        results.interrupted === 0 &&
+        results.pendingApproval === 0 &&
+        results.evaluation?.success === true &&
+        Boolean(run.goal_id);
+
+    if (canStartReplanning) {
+        try {
+            results.replanning =
+                await orchestrateReplanning({
+                    businessId,
+                    parentRunId: runId,
+                    goalId: run.goal_id,
+                    decision: results.nextDecision,
+                    evidence: results.replanningEvidence,
+                });
+        } catch (error) {
+            console.error(
+                "Automatic replanning failed:",
+                error.message
+            );
+
+            results.replanning = {
+                started: false,
+                status: "needs_attention",
+                reason:
+                    "Replanning failed. Existing execution state is preserved.",
+                requiresHumanReview: true,
+            };
+        }
+    } else {
+        results.replanning.reason =
+            results.nextDecision?.reason ??
+            "Replanning conditions not satisfied";
     }
 
     // 5. Determine remaining work.
@@ -306,7 +410,11 @@ export async function resumeAgentRun({
 
                 goalTargetReached:
                     results.evaluation?.targetReached ?? null,
-
+                // Feedback and replanning decision
+                nextDecision: results.nextDecision,
+                replanningEvidence: results.replanningEvidence,
+                // Automatic replanning outcome
+                replanning: results.replanning,
                 resumedAt: new Date().toISOString(),
             },
 

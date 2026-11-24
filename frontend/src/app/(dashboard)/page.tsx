@@ -20,7 +20,7 @@ import { RetentionChart } from "@/components/dashboard/retention-chart";
 import { ActionStatusChart } from "@/components/dashboard/action-status-chart";
 import { RecentRuns } from "@/components/dashboard/recent-runs";
 import { RecentActivityTimeline } from "@/components/dashboard/recent-activity";
-
+import { WorkerReplanningStatus } from "@/components/agent/worker-replanning-status";
 const numberFormatter = new Intl.NumberFormat("en-IN");
 
 const currencyFormatter = new Intl.NumberFormat("en-IN", {
@@ -226,7 +226,11 @@ export default function DashboardPage() {
               />
             </div>
           </div>
-
+{/* Autonomous AI Worker */}
+<WorkerReplanningStatus
+  businessId={APP_CONFIG.businessId}
+  compact
+/>
           {/* Dashboard Charts */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <RetentionChart data={retention} />

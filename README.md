@@ -2,9 +2,9 @@
 
 # 🌱 GrowPilot AI
 
-### A goal-driven, human-supervised AI Worker for small-business customer retention
+### A goal-driven, human-supervised autonomous AI Worker for small-business customer retention
 
-**Analyze customers · Plan interventions · Request approval · Resume execution · Measure results**
+**Analyze customers · Plan interventions · Request approval · Resume safely · Evaluate outcomes · Replan from new evidence**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19-149eca?logo=react)](https://react.dev/)
@@ -13,9 +13,9 @@
 [![Supabase](https://img.shields.io/badge/Supabase-Postgres-3ecf8e?logo=supabase&logoColor=white)](https://supabase.com/)
 [![Ollama](https://img.shields.io/badge/Ollama-qwen2.5%3A3b-white)](https://ollama.com/)
 
-**Working prototype · Synthetic data · Simulation-only outreach**
+**Working local prototype · Synthetic data · Simulation-only outreach · Human approval required**
 
-[Overview](#overview) · [Demo](#demonstration) · [Architecture](#architecture) · [Setup](#local-setup) · [Evaluation](#evaluation-evidence) · [Limitations](#limitations)
+[Overview](#overview) · [Workflow](#worker-workflow) · [Architecture](#architecture) · [Demo](#demonstration) · [Evaluation](#verified-evaluation-evidence) · [Setup](#local-setup) · [Limitations](#known-limitations)
 
 </div>
 
@@ -23,146 +23,242 @@
 
 ## Overview
 
-A micro-entrepreneur with falling repeat business needs more than a chatbot: they need a dependable system that finds customers at risk of churning, recommends useful interventions, safely carries out approved work, and checks whether the business goal is being met.
+A micro-entrepreneur losing repeat customers needs more than a chatbot. They need a dependable system that measures a business goal, identifies retention opportunities, proposes interventions, waits for human approval, executes permitted actions, checks updated business activity, and decides whether another plan is warranted.
 
-**GrowPilot AI** is a full-stack prototype for that workflow. Its example entrepreneur is **Arun**, owner of **Arun Digital Services**. The application uses synthetic customers and transactions; it does **not** send actual SMS, WhatsApp, or email messages.
+**GrowPilot AI** demonstrates that loop with an authenticated Next.js dashboard, an Express orchestration backend, Supabase persistence, and optional locally hosted Ollama inference. The example digital-services business and every customer/transaction in this demonstration are **synthetic**. It does **not** send real WhatsApp, SMS, or email messages.
 
-Unlike an isolated text-generation demo, GrowPilot AI stores its goals, runs, plans, actions, approval state, execution records and evaluation evidence in Supabase so work can continue after a backend restart.
+The worker is *goal-oriented* rather than a one-shot content generator: it measures a defined retention metric, persists plans and action state, resumes after human decisions, evaluates observed transactions, and can create a **new successor run when fresh evidence is detected and the goal remains unmet**. The feedback loop is **API-triggered**; it is not an unattended scheduler or continuous background service.
 
-### Defined business goal
+### Business goal and measurement
 
-| Field | Demo configuration |
+`repeat_customer_rate` is calculated from **completed transactions in a rolling 30-day window**: the percentage of active customers who have at least two completed transactions in that window. A configured baseline is descriptive demo input, not a verified historical control group.
+
+Two different synthetic scenarios are retained intentionally:
+
+| Scenario | Configured baseline | Target | Observed result | Interpretation |
+|---|---:|---:|---:|---|
+| Original demo business (Arun Digital Services) | 20% | 30% | 72% observed in a prior test | Target surpassed in synthetic data; no causal attribution |
+| Isolated replanning test (GrowPilot Replanning Test Shop) | 20% | 80% | 50% before and after the evidence insertion | Target not reached; enables a real feedback/replanning decision |
+
+The isolated test had **12 customers and 13 initial transactions**. Its 50% result reflects **1 repeat customer among 2 active customers** in the measurement window. One later completed transaction for an already-active repeat customer supplied new evidence **without raising the repeat rate to 80%**. **The new transaction is synthetic test input, not proof that an outreach message caused a purchase.**
+
+## Worker workflow
+
+1. **Understand the goal:** Load the authorized business, active goal, baseline, target, deadline, and observed performance.
+2. **Discover opportunities:** Call the `find_inactive_customers` tool; prioritize at-risk customers and filter customers with open actions.
+3. **Plan:** Generate a deterministic retention action plan; optionally enrich content with local `qwen2.5:3b` via Ollama. Unsafe/unavailable model output falls back to deterministic planning.
+4. **Persist:** Store agent run, plan, action records, logs, and resume state in Supabase.
+5. **Human handoff:** Owner/admin reviews or rejects proposed actions; drafts and authorization are validated server-side. No approval means no execution.
+6. **Execute safely:** Approved, eligible actions run only through **simulated delivery**. Completed/rejected actions are skipped on resume, including after a backend restart.
+7. **Evaluate:** Calculate the current repeat-customer rate from transactions and persist a goal evaluation with an audit event.
+8. **Inspect fresh evidence:** Before overwriting the previous evaluation, compare newly completed transactions against its timestamp.
+9. **Decide:** Wait when approvals/actions are outstanding or evidence is missing; stop when target is reached; otherwise consider a new plan subject to guardrails and replanning limits.
+10. **Replan:** Reserve a persisted replanning cycle and create a **new run with a new plan** for owner review. The successor does not automatically execute outreach.
+
+### Decision examples
+
+| Decision | Meaning |
 |---|---|
-| Business | Arun Digital Services (synthetic) |
-| Goal | Improve repeat customer retention |
-| Metric | `repeat_customer_rate` |
-| Configured baseline | **20%** — illustrative, not historically verified |
-| Target | **30%** |
-| Target date | **22 December 2026** |
-| Measurement | Repeat-customer rate derived from completed transactions within the evaluation window |
+| `wait_for_existing_actions` | Outstanding approvals or executable actions must be resolved first |
+| `wait_for_new_evidence` | No new qualifying completed transaction since the previous evaluation |
+| `replan_required` | Goal remains below target and new business evidence supports another planning cycle |
+| `goal_target_reached` | Measured metric is at or above target |
+| `manual_review` | A configured limit or invalid/uncertain state needs human intervention |
 
-A recent demonstration evaluation reported **72% observed repeat-customer rate** and **100% goal progress** against the configured 30% target. **This is not proof that the AI Worker caused an increase**: the baseline was manually configured for the demo, and customer messages are simulated. The definition of done for the *engineering demonstration* is reliable planning, controlled execution, traceability and measurable evaluation—not a demonstrated real-world income increase.
-
-## What the worker does
-
-1. **Receives the goal** and loads saved business context and current goal progress.
-2. **Uses tools** to identify inactive customers and rank retention opportunities.
-3. **Plans actions**, optionally enriching strategies with local Ollama inference. If the model fails, it switches to deterministic recommendations.
-4. **Persists the plan and checkpoint**, including actions requiring human review.
-5. **Hands off to a human** to generate/review drafts and approve or reject actions.
-6. **Resumes from persisted state**, executing only eligible approved actions in simulation; terminal actions are skipped on retry.
-7. **Measures the business metric** from transaction records, stores an evaluation and suggests the next step.
-8. **Exposes activity history and evidence** so a reviewer can inspect decisions and failures.
-
-### Interfaces
-
-| Route | What it shows |
-|---|---|
-| `/` | Dashboard and business summary |
-| `/customers` | Searchable customer directory and activity |
-| `/agent` | Goal-driven agent runs and proposed interventions |
-| `/approvals` | Draft review, approvals, Resume Worker, Evaluate Goal |
-| `/analytics` | Transactions, service-fee revenue, trends |
-| `/insights` | Business insights |
-| `/history` | Agent events, approvals, simulated execution, evidence panel |
-| `/settings` | Application and business settings |
-
-The UI is authenticated, with business membership and role checks in backend routes. Owner/admin permissions protect sensitive execution operations. Do not treat this prototype as a production security certification.
+**Replanning is bounded:** a maximum of **three** cycles is configured in the decision/orchestration logic. Each cycle stores a parent run, optional successor run, decision/evidence metadata, and status in `agent_replanning_cycles`. The demonstrated duplicate protection covers **sequential repeat resume**; concurrency and crash-mid-write guarantees are **not** established.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    U[Business owner] --> UI[Next.js / React / TypeScript]
+    Owner[Business owner / admin] --> UI[Next.js dashboard]
     UI --> API[Authenticated Express API]
-    API --> G[Goal + progress service]
-    G --> P[Agent runner / planner]
-    P --> T[Tool: find inactive customers]
-    T --> DB[(Supabase PostgreSQL)]
-    P --> M{Local Ollama available?}
-    M -->|Yes| L[qwen2.5:3b enrichment]
-    M -->|No / error| F[Deterministic fallback]
-    L --> S[Persist plan + actions + checkpoint]
-    F --> S
-    S --> DB
-    S --> H{Human decision}
-    H -->|Not yet| W[Waiting for approval]
-    H -->|Reject| R[Do not execute]
-    H -->|Approve valid draft| E[Resume executor]
-    E --> D[Simulated delivery / audit]
-    D --> DB
-    E --> V[Goal evaluation]
-    V --> DB
-    DB --> HIST[History / execution evidence UI]
+    API --> Auth[User identity and business membership checks]
+    Auth --> Runner[Goal-driven agent runner]
+    Runner --> Metrics[Goal progress service]
+    Runner --> Tool[Inactive-customer discovery tool]
+    Runner --> AI{Ollama output safe and available?}
+    AI -->|Yes| Enrich[qwen2.5:3b strategy enrichment]
+    AI -->|No| Fallback[Deterministic fallback]
+    Enrich --> Plan[Persist action plan and checkpoint]
+    Fallback --> Plan
+    Tool --> Plan
+    Plan --> DB[(Supabase PostgreSQL)]
+    Plan --> Review{Human approval}
+    Review -->|Reject| Skip[Do not execute rejected action]
+    Review -->|Approve valid action| Resume[Resume / simulated executor]
+    Review -->|Pending| Wait[Wait for owner]
+    Resume --> DB
+    Resume --> Evaluate[Evaluate goal]
+    Evaluate --> Evidence[Compare fresh completed transactions]
+    Evidence --> Decide{Replanning decision}
+    Decide -->|Wait / target met / review| Audit[Persist logs and decision]
+    Decide -->|Replan eligible| Cycle[Reserve replanning cycle]
+    Cycle --> Runner
+    Cycle --> DB
+    Audit --> DB
+    DB --> History[History and dashboard evidence]
 ```
 
-### Main components
+The **LLM proposes or enriches content; it does not authorize actions**. Planning, permissions, state transitions, persistence, goal measurement, and replanning limits remain in application code. Responsibilities are separated into services rather than claimed as a distributed multi-agent system.
 
-| Layer | Technology / purpose |
+### Main stack
+
+| Layer | Implementation |
 |---|---|
-| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS, TanStack React Query, Axios, Recharts |
-| API | Node.js, Express, Zod request validation |
-| Persistence | Supabase Postgres: business data, agent goals/runs, checkpoints, actions, execution logs and evaluations |
-| Inference | Local Ollama with `qwen2.5:3b`; deterministic fallback when unavailable |
-| Execution | Saved-state resume with human approval; outbound communication simulated |
-| Observability | Run/step/action logs, history view, evaluation results |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS, TanStack Query, Axios, Recharts |
+| Backend | Node.js, Express, Zod validation |
+| Authentication / authorization | Supabase Auth tokens; business-membership and role checks on backend routes |
+| Persistence | Supabase PostgreSQL; business data, goals, runs, action plans, action state, logs, evaluations, replanning cycles |
+| Inference | Local Ollama `qwen2.5:3b`; deterministic fallback |
+| Execution | Explicit owner/admin approval; simulated-only message delivery |
+| Observation | Run/action logs, persisted goal evaluations and evidence-based successor cycles |
 
-**Why this design?** Business decisions and authorization remain in normal application code; the LLM is an optional strategy-enrichment component, not a source of unrestricted authority. Supabase persists state across backend restarts. Specialized responsibilities are separated into planning, tools, execution, and evaluation services; this prototype does not claim to run a distributed multi-agent framework.
+### Important implementation files
+
+```text
+backend/src/services/
+  agentResume.service.js
+  goalEvaluation.service.js
+  goalProgress.service.js
+  replanningDecision.service.js
+  replanningEvidence.service.js
+  replanningOrchestrator.service.js
+backend/database/
+  schema.sql
+  seed.sql
+  auth_setup.sql
+  replanning_cycles.sql
+  replanning_test_seed.sql
+frontend/src/components/agent/
+  replanning-panel.tsx
+  worker-replanning-status.tsx
+```
+
+Some names above represent files added during the current feature work. Confirm all are committed before relying on a fresh-clone setup. In particular, `worker-replanning-status.tsx` and the History/Dashboard integrations should be committed only after the final frontend check succeeds.
+
+## Interfaces
+
+| Route | Purpose |
+|---|---|
+| `/` | Business dashboard, customer metrics, agent KPIs and latest available worker status |
+| `/customers` | Customer directory and retention signals |
+| `/agent` | Run AI agent, inspect plan, enter a saved run ID and trigger **Resume Worker** to display evaluation/replanning results |
+| `/approvals` | Generate/review draft, approve/reject actions and inspect approval state |
+| `/analytics` | Transaction and service-fee-revenue analysis |
+| `/insights` | Business insights |
+| `/history` | Agent logs, execution evidence and latest available parent/successor relationship |
+| `/settings` | Application and business settings |
+| `/login` | Supabase-backed login |
+
+The **Agent** replanning panel is confirmed to pass `npx tsc --noEmit` after integration. The additional **History/Dashboard** status component was prepared but should not be described as independently browser-tested until the final frontend changes are saved and verified. It reads the latest **20 paginated history events**, **not** the full `agent_replanning_cycles` table. A latest `wait_for_new_evidence` event may not expose an earlier successor relation; for the complete record, use the database or a future dedicated read-only cycles API.
 
 ## Demonstration
 
-Use synthetic data only. The UI workflow is:
+Use **synthetic data and an authorized demo login**.
 
-1. Log in and open **AI Agent** (`/agent`). Run a retention worker.
-2. Inspect prioritized customers, model source and saved recommendations.
-3. Open **Approvals** (`/approvals`). Generate a draft and approve one suitable action.
-4. Click **Resume Worker** to execute the approved action **in simulation**.
-5. Click **Evaluate Goal** to read actual transaction-based goal progress.
-6. Open **History** (`/history`) to inspect logs and evidence.
+### Basic workflow
 
-To demonstrate a **restart**, approve a valid action but do not resume; stop the backend (`Ctrl+C`), restart it, and then resume the saved run. To demonstrate **retry safety**, call the authenticated `POST /api/agent/:runId/resume` again for that same run and verify that the completed action is skipped and only one `message_deliveries` row remains.
+1. Open `http://localhost:3000`, sign in, and navigate to **AI Agent**.
+2. Run a retention analysis and inspect the saved run ID, prioritized customers, action-plan status and model/fallback details.
+3. Open **Approvals**, generate a valid draft and approve or reject actions as the owner/admin.
+4. Resume the saved run via the UI or authenticated API. Only eligible approved actions are delivered **in simulation**.
+5. Inspect goal evaluation and the worker decision in the resume response or Agent replanning panel.
+6. Review stored evidence under **History**. Current worker-status panels show the latest events within their pagination scope.
 
-To demonstrate **model failure**, stop the Ollama listener, confirm `http://localhost:11434/api/tags` is unavailable, then start a *new* agent run. Confirm `ai.strategySource = deterministic_fallback`, inspect `ai.fallbackReason`, and confirm the plan is persisted awaiting human approval. Restart Ollama afterward.
+### Evidence-driven replanning walkthrough (verified API scenario)
 
-> **Permissions and consent:** All execution in the demo is simulated. Some sample customers have `marketingConsent: false`; no live marketing outreach should occur without appropriate consent and additional production safeguards.
+The isolated test used:
 
-## Evaluation evidence
+- Business ID: `047b7643-cf33-b293-0dcd-4e6dd37c8579`
+- Goal ID: `e2a8e527-4f2d-194b-7405-5166d280801b`
+- Parent run ID: `46b05e97-4d2a-44d8-ba31-e33a8de264ed`
+- Successor run ID: `3a69ffc5-e0e4-491f-951f-ca6965f768be`
 
-The tested scenarios are documented in **[`docs/EVALUATION.md`](docs/EVALUATION.md)**.
+The sequence was:
 
-| Scenario | Observed result | Scope |
+1. Run the worker: **5** actions saved for approval, with actual **50%** vs target **80%**.
+2. Reject **4** actions through authenticated approval endpoints. Generate a valid Ollama draft for the remaining action, approve it, and execute its **simulated** delivery.
+3. Resume the parent run. Evaluation persists at **50%**, with `wait_for_new_evidence` and `replanning.started: false`.
+4. Insert **one new completed synthetic transaction** dated after that evaluation in the isolated test business.
+5. Resume the same parent. `newBusinessEvidence: true`, `newCompletedTransactions: 1`, `decision: replan_required`, `replanning.started: true`.
+6. Verify persisted **cycle 1**, **10 new proposed actions**, and `awaiting_human_approval`. No successor actions were automatically executed.
+7. Resume the same parent again with **no additional transaction**. It returns `wait_for_new_evidence` and `replanning.started: false`. SQL confirms **one** cycle and **one distinct successor** for that parent.
+
+The generated 10-action successor also demonstrates a **known policy gap**: the current eligibility selection can propose customers whose earlier actions were rejected. A rejected-action suppression/cooldown rule is **not yet implemented**; an operator should review successor proposals rather than interpret them as permission to override rejection.
+
+### Failure and recovery walkthroughs
+
+- **Restart recovery:** Approve a valid action, stop/restart the backend, then resume from persisted state. One simulated action completed in the observed test.
+- **Idempotent retry:** Resume the already-completed action; it is skipped and the checked `message_deliveries` count stays at **1**.
+- **Invalid draft:** An approved action lacking a valid saved draft is blocked and requires remediation.
+- **Model unavailable:** Stop Ollama and start a *new* agent run; the observed test used `deterministic_fallback`, persisted **4** proposed actions and **9** logs.
+- **Unsafe model output:** Another observed run triggered the AI safety guardrail and retained the deterministic fallback instead of trusting model text.
+
+### API requests used in the replanning test
+
+```http
+POST /api/agent/run
+Content-Type: application/json
+Authorization: Bearer <user-access-token>
+
+{
+  "businessId": "047b7643-cf33-b293-0dcd-4e6dd37c8579",
+  "goalId": "e2a8e527-4f2d-194b-7405-5166d280801b",
+  "goal": "customer_retention",
+  "limit": 5
+}
+```
+
+```http
+POST /api/agent/46b05e97-4d2a-44d8-ba31-e33a8de264ed/resume
+Content-Type: application/json
+Authorization: Bearer <user-access-token>
+
+{
+  "businessId": "047b7643-cf33-b293-0dcd-4e6dd37c8579"
+}
+```
+
+These are **development-only fixture IDs**, not reusable credentials. A fresh database will require the schema, seed, and authorized membership setup described below. The currently configured frontend business ID may differ from the isolated fixture; the frontend does not include a general business switcher.
+
+## Verified evaluation evidence
+
+| Scenario | Observed outcome | Assessment |
 |---|---|---|
-| Approved action, resume after backend restart | **PASS** — one simulated action executed | Persisted-state recovery demonstrated |
-| Retry the completed action | **PASS** — `executed: []`, completed action skipped | Post-retry `message_deliveries` count remained **1** |
-| Approved action missing a valid saved draft | **PASS (safe block)** — action not executed, manual review requested | Action needs separate remediation |
-| Ollama unavailable | **PASS** — deterministic fallback; **4** actions saved and **9** logs recorded | Local model connection refused; model-enriched actions **0** |
-| Goal measurement | **Working** — observed repeat rate **72%**, target **30%** | No valid causal attribution; baseline illustrative |
+| Authenticated approval / rejection | Four actions rejected; one valid-draft action approved and simulated; audit entries returned | **PASS** |
+| Resume and goal evaluation | Parent run evaluation persisted at 50% against 80% target | **PASS** |
+| No new business evidence | `wait_for_new_evidence`, no successor generated | **PASS** |
+| New completed transaction | Exactly one new post-evaluation transaction detected | **PASS** |
+| Evidence-driven successor | Cycle **1** created; successor run generated; **10** actions awaiting review | **PASS** |
+| Sequential duplicate resume | `replanning.started: false`; DB cycle count **1**, distinct successors **1** | **PASS** |
+| Backend restart / action retry | Completed action skipped; only one simulated delivery in observed test | **PASS** |
+| Invalid saved draft | Safe block; no execution | **PASS** |
+| Ollama offline | Deterministic fallback; plan saved | **PASS** |
+| Ollama-generated valid draft | Valid message persisted for review; source `ollama` | **PASS** |
+| Concurrent replanning / crash at uncertain commit point | Not tested | **OPEN** |
+| Rejected customer suppression | Previously rejected customers can reappear as proposals | **OPEN** |
+| Automatic scheduled / event-triggered wake-up | Not implemented | **OPEN** |
 
-**Reproducible identifiers for the captured synthetic test:**
+**Evidence identifiers:** parent `46b05e97-4d2a-44d8-ba31-e33a8de264ed`, replanning cycle `53db68ea-1850-460f-939e-8046b6be6b24`, successor `3a69ffc5-e0e4-491f-951f-ca6965f768be`. Previous adverse/restart examples include run `f4cb5b3f-26dd-45dc-8b61-8a14893034d8` and missing-draft run `6314e924-841c-4d2a-8c56-dbafe7822edd`.
 
-- Run (fallback and retry example): `f4cb5b3f-26dd-45dc-8b61-8a14893034d8`
-- Completed action: `9e6023c3-a526-450c-9a5f-47ce06b8409d`
-- Missing-draft adverse run: `6314e924-841c-4d2a-8c56-dbafe7822edd`
+For detailed scenario notes, see [`docs/EVALUATION.md`](docs/EVALUATION.md). **That file should also be updated before final submission** to reflect the new replanning evidence; this README does not imply it has already been updated.
 
-These identifiers refer to the author's development database; another installation will generate different IDs. A fresh clone needs compatible database schema, authentication configuration and synthetic seed data to reproduce the entire experience.
+### Measurement and cost transparency
 
-### Inference and cost notes
-
-- **Primary:** local `qwen2.5:3b` using Ollama.
-- **Fallback:** deterministic retention strategy when model inference fails.
-- **Measured fallback example:** `ECONNREFUSED 127.0.0.1:11434`, 4,907 ms total worker-run duration (not LLM latency).
-- **Cost:** hosted-model API charges are avoided for this local demonstration, but machine electricity, memory and operational costs are not zero; precise per-run cost/token totals have **not** been measured.
+- The goal uses **observed transaction records**, not model-supplied business metrics.
+- The test's 50% retention measurement did **not** improve after the new synthetic transaction. Replanning success is an **engineering workflow result**, not proof of increased retention or income.
+- Simulated delivery proves a state transition and audit record, **not** actual customer contact or conversion.
+- Local Ollama avoids hosted-model API fees for this test, but CPU/GPU, memory, electrical, and operations costs still exist. Some draft token counts and model latency are present in API responses; complete per-run financial cost accounting has **not** been demonstrated.
 
 ## Local setup
 
 ### Prerequisites
 
-- Windows/macOS/Linux, Node.js and npm compatible with the frontend/backend package dependencies.
-- An accessible Supabase project with the **required application schema, RLS/auth setup and synthetic seed data**.
-- Ollama and local model `qwen2.5:3b`.
-- A Supabase demo user authorized for the synthetic business.
-
-> **Reproducibility limitation:** Database migrations/seed instructions and verified `.env.example` files must be provided/checked before claiming a one-command fresh setup. The variable names below are intentionally *not guessed*. Inspect `backend/src/` and `frontend/src/` configuration and include safe example files based on actual code before submission.
+- Node.js and npm versions compatible with the repository's frontend/backend dependencies.
+- An accessible Supabase project (PostgreSQL + Supabase Auth).
+- A demo user with an **active owner/admin membership** for the business being tested.
+- Ollama and model `qwen2.5:3b` for model-enriched drafts. The agent has deterministic fallback for model failures.
 
 ### 1. Clone
 
@@ -171,27 +267,51 @@ git clone https://github.com/im-arunkr/growpilot-ai.git
 cd growpilot-ai
 ```
 
-### 2. Environment configuration
+### 2. Database setup
 
-Create local configuration files based on the actual imports/config modules:
+In a **development-only Supabase project**, review and execute the SQL files in dependency order, using the Supabase SQL Editor as appropriate:
 
 ```text
-backend/.env
-frontend/.env.local
+backend/database/schema.sql
+backend/database/seed.sql
+backend/database/auth_setup.sql
+backend/database/replanning_cycles.sql
+backend/database/replanning_test_seed.sql    # isolated optional test fixture
 ```
 
-Check project code and, where available, copy `backend/.env.example` and `frontend/.env.example`. Configure backend port, Supabase URL and server-only credentials, Ollama endpoint, and the frontend's public API URL and auth configuration as needed by the actual application. **Do not copy service-role keys, bearer tokens or private credentials into the README or frontend bundle.** Ensure the demo business is accessible to the logged-in user.
+**Review the actual SQL dependencies before running them.** In particular, `auth_setup.sql` provides business-membership authorization, while the isolated test fixture expects an existing active owner/admin membership for the original demo business to copy. If no membership is present, explicitly add an authorized demo membership rather than disabling server-side checks. Rerun behavior differs by file; avoid reseeding a nonempty environment without reviewing the SQL.
 
-### 3. Install and start Ollama
+The schema/seed SQL are checked into the project development workflow, but a fresh-clone end-to-end database bootstrap has **not** been independently verified. Do not use production data for this experiment.
+
+### 3. Environment configuration
+
+Use the repository's existing examples where available:
+
+```text
+backend/.env.example  -> backend/.env
+frontend/.env.example -> frontend/.env.local
+```
+
+Populate the values **based on the actual example files and application configuration**, including Supabase URL/keys, frontend public Supabase settings, backend API URL, business ID and Ollama settings. The frontend calls its API through `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:5000/api`) and sends the signed-in user's Supabase access token.
+
+**Keep Supabase service-role keys, bearer tokens and other secrets out of Git, client bundles and the README.** Server-only keys belong in backend configuration. Verify the configured frontend business ID matches the business accessible to the signed-in user.
+
+### 4. Ollama
 
 ```bash
 ollama pull qwen2.5:3b
+ollama list
+```
+
+Start Ollama if it is not already running as a desktop service:
+
+```bash
 ollama serve
 ```
 
-If Ollama is already running as a desktop app or service, you do not need a second `ollama serve`. Confirm readiness with `ollama list` or `curl http://localhost:11434/api/tags`.
+### 5. Backend
 
-### 4. Backend
+From the repository root:
 
 ```bash
 cd backend
@@ -199,9 +319,11 @@ npm install
 npm run dev
 ```
 
-Default local development API: `http://localhost:5000` (subject to environment settings).
+Default local API origin: `http://localhost:5000`, subject to project configuration.
 
-### 5. Frontend — separate terminal
+### 6. Frontend (separate terminal)
+
+From the repository root in a **new** terminal:
 
 ```bash
 cd frontend
@@ -209,42 +331,50 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:3000** and sign in with a configured synthetic-demo account.
+Open `http://localhost:3000` and sign in with the authorized demo user.
 
-### 6. Build checks
+### 7. Verification
 
 ```bash
 cd frontend
+npx tsc --noEmit
 npm run build
 ```
 
-Use `npm run` in each folder to inspect other scripts and any backend test/build scripts. Successful installation and build have **not** been independently verified from a fresh clone for this README update.
+The **Agent Replanning Panel** passed a local TypeScript check in the reported development session. The final History/Dashboard integration, production build and fresh-clone setup should be verified before submission; do not assume these checks passed merely because this documentation was updated.
 
 ## Selected API endpoints
 
-Most API operations require an authenticated user and authorized business membership. Consult `backend/src/routes/` for exact payloads and middleware.
+The API uses authenticated requests with server-side business ownership and role enforcement. Confirm route definitions in `backend/src/routes/` for the full contract.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/agent/run` | Generate and persist a new retention agent run |
-| `POST` | `/api/agent/:runId/resume` | Resume saved approved actions in simulation |
-| `POST` | `/api/agent/:runId/goal-evaluation` | Evaluate measurable goal for a saved run |
-| `GET` | `/api/agent/history?businessId=...` | Paginated agent/execution events |
-| `GET` | `/api/approvals/approved` | Approved actions |
-| `GET` | `/api/approvals/history` | Simulated execution history |
-| `GET` | `/api/analytics?businessId=...` | Business metrics and transaction trends |
+| `POST` | `/api/agent/run` | Create a persisted goal-driven agent run |
+| `POST` | `/api/agent/message-draft` | Generate and persist a reviewable message draft for a customer |
+| `POST` | `/api/agent/:runId/resume` | Resume saved actions, evaluate, and conditionally replan |
+| `POST` | `/api/agent/:runId/goal-evaluation` | Manually evaluate the measured goal |
+| `GET` | `/api/agent/history?businessId=...` | Read paginated execution events |
+| `GET` | `/api/approvals?businessId=...` | Read pending approvals |
+| `PATCH` | `/api/approvals/:actionId/decision` | Approve or reject an action |
+| `POST` | `/api/approvals/:actionId/execute` | Execute an approved action in simulation |
+| `GET` | `/api/approvals/approved?businessId=...` | List approved actions |
+| `GET` | `/api/approvals/history?businessId=...` | Read simulated delivery history |
 
-> Some request contracts depend on the user's authentication and current business context. Use the actual client requests/network inspector as the source of truth; IDs and credentials in this README are not a reusable login.
+### Authentication and execution boundaries
 
-## Persistence and safety model
+- API routes must verify the Supabase access token and active business membership; action-specific middleware checks the action's owning business.
+- Approval operations require authorized roles. A client-provided approver name is not trusted as user identity.
+- Draft validation and safety guardrails run before eligible execution.
+- Execution is **simulation-only**. In the verified test, the action had `marketingConsent: false` / `executionAllowed: false`, yet the **simulated** endpoint completed after owner approval; this is **not permission for real delivery**. Live-channel support must independently enforce consent and authorization before it can be enabled.
+- Rejected actions and completed actions are not re-executed on a normal resume.
 
-- **Checkpointing:** agent runs, steps and actions are persisted, permitting a later resume call after backend restart.
-- **Human handoff:** execution waits for approval. Actions with missing/invalid saved drafts are blocked and returned for manual review.
-- **Retry handling:** completed actions are skipped; in the observed retry test, a single simulated delivery remained stored.
-- **Business boundaries:** authenticated API routes and business membership checks restrict access; approved execution requires appropriate role.
-- **Fallback:** deterministic planning is used when local model enrichment fails; it cannot bypass approval.
-- **Auditability:** logs and event history preserve what the system did, including fallback decisions.
-- **Limits:** one observed idempotent retry does not establish exactly-once guarantees under concurrent workers or crash-mid-write scenarios.
+## Persistence and recovery
+
+- `agent_runs`, `action_plans`, `agent_actions`, `execution_logs`, and `evaluation_results` retain checkpoints and audit data.
+- `agent_replanning_cycles` links the evaluated parent run to its successor and tracks cycle metadata/status.
+- Repeated resume of a completed run with no fresh evidence does not create another successor in the observed test.
+- A uniqueness constraint on `parent_run_id` also protects against recording two cycles for the same parent; it does **not**, by itself, prove full atomicity of worker effects under concurrent requests or process crashes.
+- The orchestrator can mark uncertain failures for operator attention rather than automatically retry an ambiguous mid-write action.
 
 ## Repository structure
 
@@ -253,56 +383,63 @@ growpilot-ai/
 ├── frontend/
 │   └── src/
 │       ├── app/
-│       │   └── (dashboard)/
-│       │       ├── page.tsx
-│       │       ├── customers/
-│       │       ├── agent/
-│       │       ├── approvals/
-│       │       ├── analytics/
-│       │       ├── insights/
-│       │       ├── history/
-│       │       └── settings/
+│       │   ├── (dashboard)/
+│       │   │   ├── page.tsx
+│       │   │   ├── agent/
+│       │   │   ├── customers/
+│       │   │   ├── approvals/
+│       │   │   ├── analytics/
+│       │   │   ├── insights/
+│       │   │   ├── history/
+│       │   │   └── settings/
+│       │   └── login/
+│       ├── components/agent/
 │       ├── features/
 │       └── lib/
 ├── backend/
+│   ├── database/
 │   └── src/
-│       ├── agent/
 │       ├── routes/
 │       ├── controllers/
+│       ├── middleware/
 │       └── services/
 ├── docs/
 │   └── EVALUATION.md
 └── README.md
 ```
 
-This diagram lists significant folders, not every source file.
+## Known limitations
 
-## Limitations
+1. **Synthetic data and simulated outreach:** No evidence of actual business-income improvement, customer contact, or causality.
+2. **No autonomous wake-up:** The feedback loop is invoked by authenticated run/resume requests. No scheduler, transaction listener, or continuously running agent has been demonstrated.
+3. **Rejected-action policy gap:** A rejected customer's old proposal may reappear in a successor plan. Add rejection-aware suppression/cooldown and reason-sensitive policy before real use.
+4. **Sequential duplicate test only:** Concurrent resumes, distributed workers, and crash-mid-commit behavior need dedicated integration tests and stronger transactional guarantees.
+5. **Evidence detection uses `occurred_at`:** Late-arriving historical transactions or corrections may not count as new evidence if their occurrence timestamps predate the previous evaluation. Consider ingestion-time/change-data capture for production.
+6. **Re-evaluation overwrites the latest per-run evaluation:** The current `evaluation_results` behavior does not preserve a complete time-series of all successive measurements for one run.
+7. **Limited UI history:** Current read-only status UI uses a small page of log events, not a dedicated complete cycle-history API. It may omit older successor relationships.
+8. **Frontend business selection:** The UI uses a configured business ID; isolated test-business API results will not automatically appear unless the selected/configured business matches.
+9. **Consent and delivery:** No real outreach channel exists. Simulation-only execution must not be confused with consent authorization for live messaging.
+10. **Production readiness:** Database migration reproducibility, security assessment, automated tests, deployment, monitoring, failure reconciliation, real-world baselines and complete cost telemetry remain future work.
 
-1. **Synthetic business data** only; simulated messages have no real customer-delivery or response signal.
-2. **Causality not established:** 72% is an observed synthetic-data metric, not an AI-driven improvement over a validated 20% historical baseline.
-3. **No live messaging** or consent-verified production outreach.
-4. **No proven concurrency safety** or fully transactional, exactly-once guarantees for all failure modes.
-5. **No fully autonomous continuous monitoring loop** demonstrated; user actions initiate parts of the workflow.
-6. **Incomplete fresh-clone reproducibility** until database schema, seed/migrations, verified environment examples and login setup are packaged and exercised.
-7. **Incomplete cost telemetry** for precise model token usage, compute and provider comparisons.
+## Roadmap / submission checklist
 
-## Roadmap and project status
-
-**Implemented in the current prototype:** dashboard, customers, agent, approvals, analytics, insights, history, settings, authenticated business-scoped workflow, checkpointed worker resume, deterministic fallback, goal evaluation and simulation audit records.
-
-**Before production:** complete reproducible database setup, automated integration/concurrency tests, consent and communication controls, proper outreach provider integrations, metrics baselines and attribution, operational monitoring, deployment hardening and ongoing replanning policy.
-
-## Documentation and submission
-
-- [Evaluation report](docs/EVALUATION.md) — successful execution, failure cases, limitations, retry evidence.
-- Architecture diagram — included above; can be exported as an image for the submission.
-- Demo walkthrough — follow [Demonstration](#demonstration) and capture UI plus run-level traces.
-- Learning note, demo video URL, and verified `.env.example` + synthetic seed setup — **to be added before final submission**; do not mark them complete prematurely.
+- [x] Goal-driven agent runner and customer opportunity tool
+- [x] Local Ollama enrichment with safe deterministic fallback
+- [x] Persistent actions, owner approval and audited simulated execution
+- [x] Checkpointed resume, evaluation and sequential action retry behavior
+- [x] Evidence-driven replanning and persisted successor cycle
+- [x] Sequential no-new-evidence duplicate replanning test
+- [x] Agent Page Resume/Replanning panel TypeScript check (reported)
+- [ ] Final History/Dashboard component integration + TypeScript/build confirmation
+- [ ] Update [`docs/EVALUATION.md`](docs/EVALUATION.md) with newest verified run IDs and results
+- [ ] Commit/push final feature files, SQL and docs
+- [ ] Record demo video and provide its URL
+- [ ] Add or finalize learning/engineering trade-offs and AI-assistance disclosure for the assignment
+- [ ] Implement rejection suppression/cooldown and stronger production concurrency guarantees
 
 ## Responsible use
 
-GrowPilot AI is a **development demonstration**, not a ready-to-deploy customer marketing system or a validated business-growth claim. AI output should be reviewed, sensitive credentials kept server-side, personal data protected, and actual customer outreach enabled only after consent, authorization and operational safeguards are implemented.
+GrowPilot AI is a **development and evaluation prototype**, not a production marketing system or a scientifically validated retention uplift. Human decisions are required before actions; model-generated text is checked; sensitive credentials stay server-side; real outreach and automated operations would need separate authorization, explicit consent, privacy controls, monitoring and operational validation.
 
 ---
 

@@ -24,7 +24,7 @@ import type {
 } from "@/features/agent/types";
 import { APP_CONFIG } from "@/lib/constants";
 import { getApiErrorMessage } from "@/lib/api/client";
-
+import { ReplanningPanel } from "@/components/agent/replanning-panel";
 const statusColors: Record<string, string> = {
   high: "bg-red-50 text-red-700",
   medium: "bg-amber-50 text-amber-700",
@@ -55,10 +55,9 @@ function ActionCard({
         </div>
 
         <span
-          className={`rounded-full px-3 py-1 text-xs font-semibold ${
-            statusColors[action.priority] ??
+          className={`rounded-full px-3 py-1 text-xs font-semibold ${statusColors[action.priority] ??
             "bg-slate-100 text-slate-600"
-          }`}
+            }`}
         >
           {formatLabel(action.priority)} Priority
         </span>
@@ -340,11 +339,10 @@ function ExecutionResults({
               className="flex items-start gap-3"
             >
               <div
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                  step.status === "completed"
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${step.status === "completed"
                     ? "bg-emerald-50 text-emerald-700"
                     : "bg-amber-50 text-amber-700"
-                }`}
+                  }`}
               >
                 {step.status === "completed" ? (
                   <CheckCircle2 className="h-4 w-4" />
@@ -467,11 +465,11 @@ export default function AgentPage() {
             </label>
 
             <select
-  id="agent-goal"
-  disabled
-  value="customer_retention"
-  className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 disabled:cursor-not-allowed"
->
+              id="agent-goal"
+              disabled
+              value="customer_retention"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 disabled:cursor-not-allowed"
+            >
               <option value="customer_retention">
                 Customer Retention
               </option>
@@ -538,8 +536,8 @@ export default function AgentPage() {
         </div>
 
 
-{/* Previous Agent Execution Events */}
-<AgentActivityHistory businessId={APP_CONFIG.businessId} />
+        {/* Previous Agent Execution Events */}
+        <AgentActivityHistory businessId={APP_CONFIG.businessId} />
 
       </section>
 
@@ -588,7 +586,11 @@ export default function AgentPage() {
       {agentMutation.isSuccess && result && (
         <ExecutionResults result={result} />
       )}
-
+      {/* Autonomous Feedback & Replanning */}
+      <ReplanningPanel
+        businessId={APP_CONFIG.businessId}
+        initialRunId={result?.runId}
+      />
       {/* Initial Empty State */}
       {agentMutation.isIdle && (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center sm:p-12">
