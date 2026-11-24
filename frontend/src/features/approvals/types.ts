@@ -69,6 +69,8 @@ export interface ApprovalDecisionRequest {
 export interface GenerateMessageDraftRequest {
   businessId: string;
   customerId: string;
+  actionId?: string;
+  recoverApprovedMissingDraft?: boolean;
 }
 
 

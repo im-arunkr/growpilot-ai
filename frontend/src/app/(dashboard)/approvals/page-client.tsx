@@ -621,6 +621,15 @@ function ResumeWorkerSection({
     const [lastResult, setLastResult] =
         useState<ResumeResult | null>(null);
 
+    const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
+    const [isBulkResuming, setIsBulkResuming] = useState(false);
+    const [bulkResumeState, setBulkResumeState] = useState<{
+        done: number;
+        total: number;
+        succeeded: number;
+        failed: string[];
+    } | null>(null);
+
     // Fetch approved actions awaiting simulation.
     const approvedQuery = useQuery({
         queryKey: [
@@ -683,37 +692,37 @@ function ResumeWorkerSection({
         },
     });
 
-  // Evaluate the business goal for a saved worker run.
-  const evaluationMutation = useMutation({
-    mutationFn: async (runId: string) => {
-      const response = await apiClient.post<{
-        success: boolean;
-        message: string;
-        data: GoalEvaluation;
-      }>(
-        `/agent/${runId}/goal-evaluation`,
-        {
-          businessId,
-        }
-      );
+    // Evaluate the business goal for a saved worker run.
+    const evaluationMutation = useMutation({
+        mutationFn: async (runId: string) => {
+            const response = await apiClient.post<{
+                success: boolean;
+                message: string;
+                data: GoalEvaluation;
+            }>(
+                `/agent/${runId}/goal-evaluation`,
+                {
+                    businessId,
+                }
+            );
 
-      return response.data;
-    },
+            return response.data;
+        },
 
-    onSuccess: async (response) => {
-      // Show evaluation in the existing Resume Result UI.
-      setLastResult((previous) => {
-        if (!previous) return previous;
+        onSuccess: async (response) => {
+            // Show evaluation in the existing Resume Result UI.
+            setLastResult((previous) => {
+                if (!previous) return previous;
 
-        return {
-          ...previous,
-          evaluation: response.data,
-        };
-      });
+                return {
+                    ...previous,
+                    evaluation: response.data,
+                };
+            });
 
-      await queryClient.invalidateQueries();
-    },
-  });
+            await queryClient.invalidateQueries();
+        },
+    });
 
     function handleResume(runId: string) {
         if (resumeMutation.isPending) return;
@@ -726,6 +735,82 @@ function ResumeWorkerSection({
 
         setLastResult(null);
         resumeMutation.mutate(runId);
+    }
+
+    async function handleBulkResume() {
+        if (isBulkResuming || resumeMutation.isPending) return;
+
+        const runs = approvedRuns.filter((run) =>
+            selectedRunIds.includes(run.runId)
+        );
+
+        if (runs.length === 0) {
+            window.alert("Select at least one worker run.");
+            return;
+        }
+
+        if (!window.confirm(
+            `Resume ${runs.length} selected worker run(s)?\n\n` +
+            "Approved actions will execute in simulation only. " +
+            "No real customer messages will be sent."
+        )) return;
+
+        setIsBulkResuming(true);
+        setBulkResumeState({
+            done: 0,
+            total: runs.length,
+            succeeded: 0,
+            failed: [],
+        });
+
+        let succeeded = 0;
+        const failed: string[] = [];
+
+        try {
+            for (let i = 0; i < runs.length; i++) {
+                const runId = runs[i].runId;
+
+                try {
+                    const response =
+                        await apiClient.post<ResumeResponse>(
+                            `/agent/${runId}/resume`,
+                            { businessId }
+                        );
+
+                    if (!response.data.success) {
+                        throw new Error(
+                            response.data.message || "Resume failed"
+                        );
+                    }
+
+                    // Keep the existing result panel functional.
+                    setLastResult(response.data.data);
+
+                    if (response.data.data.failed.length > 0) {
+                        failed.push(
+                            `${runId}: ${response.data.data.failed.length} action(s) failed`
+                        );
+                    } else {
+                        succeeded++;
+                    }
+                } catch (error) {
+                    failed.push(
+                        `${runId}: ${getApiErrorMessage(error)}`
+                    );
+                }
+
+                setBulkResumeState({
+                    done: i + 1,
+                    total: runs.length,
+                    succeeded,
+                    failed: [...failed],
+                });
+            }
+        } finally {
+            setSelectedRunIds([]);
+            setIsBulkResuming(false);
+            await queryClient.invalidateQueries();
+        }
     }
 
     return (
@@ -780,36 +865,101 @@ function ResumeWorkerSection({
                     </div>
                 )}
 
+
             {approvedRuns.length > 0 && (
                 <div className="mt-5 space-y-3">
+
+                    {/* Bulk Selection Toolbar */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 p-4">
+                        <label className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                            <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-blue-600"
+                                disabled={isBulkResuming || resumeMutation.isPending}
+                                checked={approvedRuns.every((run) =>
+                                    selectedRunIds.includes(run.runId)
+                                )}
+                                onChange={(event) =>
+                                    setSelectedRunIds(
+                                        event.target.checked
+                                            ? approvedRuns.map((run) => run.runId)
+                                            : []
+                                    )
+                                }
+                            />
+                            Select All Runs ({approvedRuns.length})
+                        </label>
+
+                        <button
+                            type="button"
+                            disabled={
+                                isBulkResuming ||
+                                resumeMutation.isPending ||
+                                !approvedRuns.some((run) =>
+                                    selectedRunIds.includes(run.runId)
+                                )
+                            }
+                            onClick={() => void handleBulkResume()}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40"
+                        >
+                            <Play className="h-4 w-4" />
+                            {isBulkResuming
+                                ? "Resuming Workers..."
+                                : `Resume Selected Workers (${approvedRuns.filter((run) =>
+                                    selectedRunIds.includes(run.runId)
+                                ).length
+                                })`}
+                        </button>
+                    </div>
+
+                    {/* Individual Worker Runs */}
                     {approvedRuns.map((run) => (
                         <div
                             key={run.runId}
                             className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between"
                         >
-                            <div className="min-w-0">
-                                <p className="text-sm font-semibold text-slate-900">
-                                    Worker Run
-                                </p>
+                            <div className="flex min-w-0 items-start gap-3">
+                                <input
+                                    type="checkbox"
+                                    aria-label={`Select worker run ${run.runId}`}
+                                    className="mt-1 h-4 w-4 accent-blue-600"
+                                    disabled={
+                                        isBulkResuming || resumeMutation.isPending
+                                    }
+                                    checked={selectedRunIds.includes(run.runId)}
+                                    onChange={(event) =>
+                                        setSelectedRunIds((current) =>
+                                            event.target.checked
+                                                ? [...new Set([...current, run.runId])]
+                                                : current.filter((id) => id !== run.runId)
+                                        )
+                                    }
+                                />
 
-                                <p className="mt-1 break-all font-mono text-xs text-slate-500">
-                                    {run.runId}
-                                </p>
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-900">
+                                        Worker Run
+                                    </p>
 
-                                <p className="mt-2 text-xs text-emerald-700">
-                                    {run.approvedCount} approved action(s)
-                                    ready
-                                </p>
+                                    <p className="mt-1 break-all font-mono text-xs text-slate-500">
+                                        {run.runId}
+                                    </p>
+
+                                    <p className="mt-2 text-xs text-emerald-700">
+                                        {run.approvedCount} approved action(s) ready
+                                    </p>
+                                </div>
                             </div>
 
                             <button
                                 type="button"
-                                disabled={resumeMutation.isPending}
+                                disabled={
+                                    resumeMutation.isPending || isBulkResuming
+                                }
                                 onClick={() => handleResume(run.runId)}
-                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                             >
                                 <Play className="h-4 w-4" />
-
                                 {resumeMutation.isPending &&
                                     resumeMutation.variables === run.runId
                                     ? "Resuming..."
@@ -817,8 +967,42 @@ function ResumeWorkerSection({
                             </button>
                         </div>
                     ))}
+
+                    {/* Bulk Execution Summary */}
+                    {bulkResumeState && (
+                        <div
+                            role="status"
+                            className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm"
+                        >
+                            <p className="font-semibold text-slate-900">
+                                Bulk Resume Progress
+                            </p>
+
+                            <p className="mt-2">
+                                Processed: {bulkResumeState.done}/{bulkResumeState.total}
+                            </p>
+
+                            <p className="text-emerald-700">
+                                Successful runs: {bulkResumeState.succeeded}
+                            </p>
+
+                            <p className="text-red-700">
+                                Runs with errors: {bulkResumeState.failed.length}
+                            </p>
+
+                            {bulkResumeState.failed.map((error, index) => (
+                                <p
+                                    key={index}
+                                    className="mt-2 break-all text-xs text-red-700"
+                                >
+                                    {error}
+                                </p>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
+
 
             {resumeMutation.isError && (
                 <div
@@ -835,58 +1019,57 @@ function ResumeWorkerSection({
                 </div>
             )}
 
-      {lastResult && (
-        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-900">
-                Business Goal Evaluation
-              </h3>
+            {lastResult && (
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 className="text-sm font-semibold text-slate-900">
+                                Business Goal Evaluation
+                            </h3>
 
-              <p className="mt-1 text-xs text-slate-500">
-                Measure customer retention against the
-                saved business goal.
-              </p>
-            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                                Measure customer retention against the
+                                saved business goal.
+                            </p>
+                        </div>
 
-            <button
-              type="button"
-              disabled={evaluationMutation.isPending}
-              onClick={() =>
-                evaluationMutation.mutate(lastResult.runId)
-              }
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${
-                  evaluationMutation.isPending
-                    ? "animate-spin"
-                    : ""
-                }`}
-              />
+                        <button
+                            type="button"
+                            disabled={evaluationMutation.isPending}
+                            onClick={() =>
+                                evaluationMutation.mutate(lastResult.runId)
+                            }
+                            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <RefreshCw
+                                className={`h-4 w-4 ${evaluationMutation.isPending
+                                        ? "animate-spin"
+                                        : ""
+                                    }`}
+                            />
 
-              {evaluationMutation.isPending
-                ? "Evaluating Goal..."
-                : "Evaluate Goal"}
-            </button>
-          </div>
+                            {evaluationMutation.isPending
+                                ? "Evaluating Goal..."
+                                : "Evaluate Goal"}
+                        </button>
+                    </div>
 
-          {evaluationMutation.isError && (
-            <div
-              role="alert"
-              className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-            >
-              {getApiErrorMessage(evaluationMutation.error)}
-            </div>
-          )}
+                    {evaluationMutation.isError && (
+                        <div
+                            role="alert"
+                            className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                        >
+                            {getApiErrorMessage(evaluationMutation.error)}
+                        </div>
+                    )}
 
-          {evaluationMutation.isSuccess && (
-            <p className="mt-3 text-xs font-medium text-emerald-700">
-              Goal evaluation saved successfully.
-            </p>
-          )}
-        </div>
-      )}
+                    {evaluationMutation.isSuccess && (
+                        <p className="mt-3 text-xs font-medium text-emerald-700">
+                            Goal evaluation saved successfully.
+                        </p>
+                    )}
+                </div>
+            )}
 
             {lastResult && (
                 <div
@@ -1080,7 +1263,19 @@ export default function ApprovalsPage() {
     const [priorityFilter, setPriorityFilter] =
         useState<PriorityFilter>("all");
     const [page, setPage] = useState(1);
-
+    const queryClient = useQueryClient();
+    const bulkDraftMutation = useGenerateMessageDraft();
+    const bulkDecisionMutation = useApprovalDecision();
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [bulkState, setBulkState] = useState<{
+        kind: "generate" | "approve" | "reject";
+        done: number;
+        total: number;
+        failures: string[];
+    } | null>(null);
+    const [isBulkRunning, setIsBulkRunning] = useState(false);
+    const [reviewBulk, setReviewBulk] = useState(false);
+    const [reviewConfirmed, setReviewConfirmed] = useState(false);
 
     const approvals = data?.data ?? [];
 
@@ -1140,14 +1335,133 @@ export default function ApprovalsPage() {
         (action) => Boolean(getSavedDraft(action))
     ).length;
 
+    // Selection is scoped to the filtered queue, not to the current page.
+    // Unselected/hidden priority groups are never changed by bulk actions.
+    const selectedActions = filteredApprovals.filter((action) =>
+        selectedIds.includes(action.id)
+    );
+    // A priority/search filter alone defines a bulk scope. Individual checkboxes
+    // optionally narrow that scope; no extra Select All click is required.
+    const bulkActions = selectedActions.length > 0 ? selectedActions : filteredApprovals;
+    const bulkReady = bulkActions.filter((action) => Boolean(getSavedDraft(action)));
+    const bulkMissing = bulkActions.length - bulkReady.length;
+    const usingManualSelection = selectedActions.length > 0;
+    const allFilteredSelected = filteredApprovals.length > 0 &&
+        filteredApprovals.every((action) => selectedIds.includes(action.id));
+
+    function toggleSelection(actionId: string, checked: boolean) {
+        setSelectedIds((current) =>
+            checked ? [...new Set([...current, actionId])] : current.filter((id) => id !== actionId)
+        );
+        setReviewConfirmed(false);
+    }
+
+    function toggleSelectFiltered(checked: boolean) {
+        const visibleIds = new Set(filteredApprovals.map((action) => action.id));
+        setSelectedIds((current) => checked
+            ? [...new Set([...current, ...visibleIds])]
+            : current.filter((id) => !visibleIds.has(id))
+        );
+        setReviewConfirmed(false);
+    }
+
+    async function runBulk(kind: "generate" | "approve" | "reject") {
+        if (isBulkRunning) return;
+        const targets = kind === "generate"
+            ? bulkActions.filter((action) => !getSavedDraft(action))
+            : kind === "approve"
+                ? bulkReady
+                : bulkActions;
+        if (!targets.length) {
+            window.alert(kind === "approve"
+                ? "No selected pending actions have a saved draft. Generate and review drafts first."
+                : "No eligible pending actions selected.");
+            return;
+        }
+
+        if (kind === "approve" && !reviewConfirmed) {
+            setReviewBulk(true);
+            window.alert("Review every message in the bulk review panel and confirm before approving.");
+            return;
+        }
+
+        const label = kind === "generate" ? "Generate AI messages for" :
+            kind === "approve" ? "Approve saved messages for" : "Reject actions for";
+        const skipped = bulkActions.length - targets.length;
+        const warning = kind === "approve" && skipped > 0
+            ? `\n${skipped} selected actions without saved drafts will be skipped.`
+            : "";
+        const scopeLabel = usingManualSelection
+            ? "individually selected actions"
+            : `${priorityFilter.toUpperCase()} priority filter${search.trim() ? " and current search" : ""} (all matching pages)`;
+        if (!window.confirm(`${label} ${targets.length} customer action(s) from ${scopeLabel}?${warning}\nNo real messages will be sent.`)) return;
+
+        let rejectionReason: string | null = null;
+        if (kind === "reject") {
+            const input = window.prompt("Reason for rejecting these actions (1–500 characters):");
+            if (input === null) return;
+            rejectionReason = input.trim();
+            if (!rejectionReason || rejectionReason.length > 500) {
+                window.alert("Enter a rejection reason between 1 and 500 characters.");
+                return;
+            }
+        }
+
+        setIsBulkRunning(true);
+        const failures: string[] = [];
+        setBulkState({ kind, done: 0, total: targets.length, failures: [] });
+        try {
+            // Deliberately sequential: avoid hammering the local Ollama model and
+            // reuse the same server-side rules as individual actions.
+            for (let index = 0; index < targets.length; index++) {
+                const action = targets[index];
+                try {
+                    if (kind === "generate") {
+                        const result = await bulkDraftMutation.mutateAsync({
+                            businessId: action.business_id,
+                            customerId: action.customer_id,
+                        });
+                        if (!result.success || !result.data?.draftPersisted || result.data.actionId !== action.id) {
+                            throw new Error("AI draft was not confirmed saved for this action");
+                        }
+                    } else {
+                        await bulkDecisionMutation.mutateAsync({
+                            actionId: action.id,
+                            request: {
+                                businessId: action.business_id,
+                                decision: kind === "approve" ? "approved" : "rejected",
+                                approvedBy: "Arun",
+                                reason: rejectionReason,
+                            },
+                        });
+                    }
+                } catch (error) {
+                    failures.push(`${action.payload?.customerName ?? action.id}: ${getApiErrorMessage(error)}`);
+                }
+                setBulkState({ kind, done: index + 1, total: targets.length, failures: [...failures] });
+            }
+        } finally {
+            await queryClient.invalidateQueries();
+            await refetch();
+            setIsBulkRunning(false);
+            setSelectedIds([]);
+            setReviewConfirmed(false);
+            setReviewBulk(false);
+        }
+    }
+
     function updateSearch(value: string) {
         setSearch(value);
         setPage(1);
+        setSelectedIds([]);
+        setReviewConfirmed(false);
     }
 
     function updatePriority(value: PriorityFilter) {
         setPriorityFilter(value);
         setPage(1);
+        setSelectedIds([]);
+        setReviewConfirmed(false);
     }
 
     return (
@@ -1335,14 +1649,99 @@ export default function ApprovalsPage() {
                         </p>
                     </div>
 
+                    {/* Active priority filter is the default bulk scope; manual selection narrows it. */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-800">
+                                <input type="checkbox" className="h-4 w-4 accent-blue-600"
+                                    disabled={isBulkRunning || filteredApprovals.length === 0}
+                                    checked={allFilteredSelected}
+                                    onChange={(event) => toggleSelectFiltered(event.target.checked)} />
+                                Select All ({filteredApprovals.length})
+                            </label>
+                            {usingManualSelection && (
+                                <button type="button" disabled={isBulkRunning}
+                                    onClick={() => { setSelectedIds([]); setReviewConfirmed(false); setReviewBulk(false); }}
+                                    className="text-xs font-semibold text-blue-600 hover:text-blue-700">
+                                    Clear Selection
+                                </button>
+                            )}
+                            <span className="text-xs text-slate-500">
+                                {usingManualSelection ? `${selectedActions.length} manually selected` : `${bulkActions.length} in active filter`} · {bulkReady.length} drafts ready · {bulkMissing} drafts missing
+                            </span>
+                        </div>
+                        <p className="mt-2 text-xs text-slate-500">
+                            Choose High, Medium, Low or All and click a bulk action directly. No checkbox needed. Selecting individual customers narrows the action to those checked. Applies across all filtered pages.
+                        </p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                            <button type="button" disabled={isBulkRunning || !bulkActions.some((a) => !getSavedDraft(a))}
+                                onClick={() => void runBulk("generate")}
+                                className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+                                Generate Missing AI Messages
+                            </button>
+                            <button type="button" disabled={isBulkRunning || bulkReady.length === 0}
+                                onClick={() => { setReviewBulk((value) => !value); setReviewConfirmed(false); }}
+                                className="rounded-lg border border-emerald-200 px-4 py-2.5 text-sm font-semibold text-emerald-700 disabled:opacity-40">
+                                Review & Approve {usingManualSelection ? "Selected" : "Filtered"} ({bulkReady.length})
+                            </button>
+                            <button type="button" disabled={isBulkRunning || bulkActions.length === 0}
+                                onClick={() => void runBulk("reject")}
+                                className="rounded-lg border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700 disabled:opacity-40">
+                                Reject {usingManualSelection ? "Selected" : "Filtered"} ({bulkActions.length})
+                            </button>
+                        </div>
+                        {reviewBulk && bulkReady.length > 0 && (
+                            <div className="mt-4 rounded-xl border border-emerald-200 p-4">
+                                <h3 className="text-sm font-semibold text-slate-900">Review all saved drafts before approving</h3>
+                                <div className="mt-3 max-h-80 space-y-3 overflow-y-auto">
+                                    {bulkReady.map((action) => (
+                                        <div key={action.id} className="rounded-lg bg-slate-50 p-3">
+                                            <p className="text-sm font-semibold">{action.payload?.customerName ?? "Unknown Customer"}</p>
+                                            <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{getSavedDraft(action)}</p>
+                                            {action.payload?.marketingConsent !== true && (
+                                                <p className="mt-1 text-xs text-red-700">No marketing consent — simulation only</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
+                                    <input type="checkbox" className="mt-1 accent-emerald-600" checked={reviewConfirmed}
+                                        onChange={(event) => setReviewConfirmed(event.target.checked)} />
+                                    I have reviewed all the above saved drafts and authorize simulation-only approval.
+                                </label>
+                                <button type="button" disabled={!reviewConfirmed || isBulkRunning}
+                                    onClick={() => void runBulk("approve")}
+                                    className="mt-3 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+                                    Confirm Bulk Approval ({bulkReady.length})
+                                </button>
+                            </div>
+                        )}
+                        {bulkState && (
+                            <div role="status" className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+                                {bulkState.kind}: {bulkState.done}/{bulkState.total} processed · {bulkState.failures.length} failed
+                                {bulkState.failures.length > 0 && (
+                                    <div className="mt-2 max-h-32 overflow-auto text-xs text-red-700">
+                                        {bulkState.failures.map((failure, index) => <p key={index}>{failure}</p>)}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
                     {/* Approval Cards */}
                     {visibleApprovals.length > 0 ? (
                         <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
                             {visibleApprovals.map((action) => (
-                                <ApprovalCard
-                                    key={action.id}
-                                    action={action}
-                                />
+                                <div key={action.id} className="min-w-0">
+                                    <label className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-700">
+                                        <input type="checkbox" className="h-4 w-4 accent-blue-600"
+                                            disabled={isBulkRunning}
+                                            checked={selectedIds.includes(action.id)}
+                                            onChange={(event) => toggleSelection(action.id, event.target.checked)} />
+                                        Select for bulk action
+                                    </label>
+                                    <ApprovalCard action={action} />
+                                </div>
                             ))}
                         </div>
                     ) : (

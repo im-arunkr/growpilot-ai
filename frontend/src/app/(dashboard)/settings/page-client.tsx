@@ -18,8 +18,12 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
-
-import { useAIModelStatus } from "@/features/settings/hooks";
+import { useEffect, useState } from "react";
+import {
+  useAIModelStatus,
+  useActiveBusinessGoal,
+  useSaveBusinessGoal,
+} from "@/features/settings/hooks";
 import { useBusinessAnalytics } from "@/features/analytics/hooks";
 import { APP_CONFIG } from "@/lib/constants";
 import { getApiErrorMessage } from "@/lib/api/client";
@@ -40,9 +44,8 @@ function DetailRow({
       </span>
 
       <span
-        className={`break-all text-sm font-medium text-slate-900 ${
-          mono ? "font-mono text-xs" : ""
-        }`}
+        className={`break-all text-sm font-medium text-slate-900 ${mono ? "font-mono text-xs" : ""
+          }`}
       >
         {value}
       </span>
@@ -86,6 +89,32 @@ function SectionCard({
 
 export default function SettingsPage() {
   const modelQuery = useAIModelStatus();
+  const goalQuery = useActiveBusinessGoal(APP_CONFIG.businessId);
+  const activeGoal = goalQuery.data?.data;
+
+  const saveGoalMutation = useSaveBusinessGoal();
+
+  const [goalTitle, setGoalTitle] = useState("");
+  const [goalDescription, setGoalDescription] = useState("");
+  const [goalBaseline, setGoalBaseline] = useState("");
+  const [goalTarget, setGoalTarget] = useState("");
+  const [goalDeadline, setGoalDeadline] = useState("");
+
+  // Populate the form when the active goal loads.
+  useEffect(() => {
+    if (!activeGoal) return;
+
+    setGoalTitle(activeGoal.title);
+    setGoalDescription(activeGoal.description);
+    setGoalBaseline(String(activeGoal.baseline_value ?? ""));
+    setGoalTarget(String(activeGoal.target_value ?? ""));
+
+    setGoalDeadline(
+      activeGoal.due_at
+        ? new Date(activeGoal.due_at).toISOString().slice(0, 10)
+        : ""
+    );
+  }, [activeGoal]);
 
   const businessQuery = useBusinessAnalytics(
     APP_CONFIG.businessId
@@ -136,17 +165,194 @@ export default function SettingsPage() {
           className="inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
         >
           <RefreshCw
-            className={`h-4 w-4 ${
-              modelQuery.isFetching ||
+            className={`h-4 w-4 ${modelQuery.isFetching ||
               businessQuery.isFetching
-                ? "animate-spin"
-                : ""
-            }`}
+              ? "animate-spin"
+              : ""
+              }`}
           />
 
           Refresh Status
         </button>
       </div>
+
+
+      <SectionCard
+        title="Business Goal Configuration"
+        description="Configure the active customer retention goal used by the AI Agent."
+        icon={Activity}
+      >
+        {goalQuery.isPending ? (
+          <p className="text-sm text-slate-500">
+            Loading business goal...
+          </p>
+        ) : goalQuery.isError ? (
+          <p className="text-sm text-red-600">
+            {getApiErrorMessage(goalQuery.error)}
+          </p>
+        ) : (
+          <form
+            className="space-y-5"
+            onSubmit={async (event) => {
+              event.preventDefault();
+
+              const baseline = Number(goalBaseline);
+              const target = Number(goalTarget);
+
+              if (
+                !goalBaseline.trim() ||
+                !goalTarget.trim() ||
+                !Number.isFinite(baseline) ||
+                !Number.isFinite(target) ||
+                baseline < 0 ||
+                target > 100 ||
+                target <= baseline
+              ) {
+                window.alert(
+                  "Enter a valid baseline and target: 0 ≤ baseline < target ≤ 100."
+                );
+                return;
+              }
+
+              const dueAt = goalDeadline
+                ? new Date(
+                  `${goalDeadline}T23:59:00+05:30`
+                ).toISOString()
+                : null;
+
+              if (dueAt && new Date(dueAt).getTime() <= Date.now()) {
+                window.alert("Select a future deadline.");
+                return;
+              }
+
+              if (
+                !window.confirm(
+                  `Save a new business goal with target ${target}%?\n\n` +
+                  "The previous active goal will be paused. " +
+                  "Existing agent actions will not be executed."
+                )
+              ) {
+                return;
+              }
+
+              try {
+                await saveGoalMutation.mutateAsync({
+                  businessId: APP_CONFIG.businessId,
+                  title: goalTitle.trim(),
+                  description: goalDescription.trim(),
+                  baseline,
+                  target,
+                  dueAt,
+                });
+
+                window.alert("Business goal saved successfully.");
+              } catch (error) {
+                window.alert(getApiErrorMessage(error));
+              }
+            }}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium">
+                  Goal Title
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={150}
+                  value={goalTitle}
+                  onChange={(e) => setGoalTitle(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 p-3"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium">
+                  Goal Description
+                </label>
+                <textarea
+                  required
+                  maxLength={1000}
+                  rows={3}
+                  value={goalDescription}
+                  onChange={(e) => setGoalDescription(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 p-3"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Baseline (%)
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  value={goalBaseline}
+                  onChange={(e) => setGoalBaseline(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 p-3"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Target (%)
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  value={goalTarget}
+                  onChange={(e) => setGoalTarget(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 p-3"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Deadline
+                </label>
+                <input
+                  type="date"
+                  value={goalDeadline}
+                  onChange={(e) => setGoalDeadline(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 p-3"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Goal Metric
+                </label>
+                <input
+                  value="Repeat Customer Rate"
+                  disabled
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-slate-600"
+                />
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Saving creates a new active goal and pauses the previous
+              goal. Previous agent runs remain in history.
+            </p>
+
+            <button
+              type="submit"
+              disabled={saveGoalMutation.isPending}
+              className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saveGoalMutation.isPending
+                ? "Saving Goal..."
+                : "Save Business Goal"}
+            </button>
+          </form>
+        )}
+      </SectionCard>
 
       {/* Read-only Information */}
       <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
@@ -178,15 +384,14 @@ export default function SettingsPage() {
           </div>
 
           <p
-            className={`mt-4 text-2xl font-bold ${
-              modelQuery.isPending
-                ? "text-slate-500"
-                : modelQuery.isError
-                  ? "text-amber-700"
-                  : isModelOnline
-                    ? "text-emerald-700"
-                    : "text-red-700"
-            }`}
+            className={`mt-4 text-2xl font-bold ${modelQuery.isPending
+              ? "text-slate-500"
+              : modelQuery.isError
+                ? "text-amber-700"
+                : isModelOnline
+                  ? "text-emerald-700"
+                  : "text-red-700"
+              }`}
           >
             {modelQuery.isPending
               ? "Checking..."
@@ -361,11 +566,10 @@ export default function SettingsPage() {
               )}
 
               <div
-                className={`mt-5 flex items-start gap-3 rounded-xl p-4 ${
-                  isModelOnline
-                    ? "border border-emerald-200 bg-emerald-50"
-                    : "border border-amber-200 bg-amber-50"
-                }`}
+                className={`mt-5 flex items-start gap-3 rounded-xl p-4 ${isModelOnline
+                  ? "border border-emerald-200 bg-emerald-50"
+                  : "border border-amber-200 bg-amber-50"
+                  }`}
               >
                 {isModelOnline ? (
                   <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
@@ -374,11 +578,10 @@ export default function SettingsPage() {
                 )}
 
                 <p
-                  className={`text-xs leading-6 ${
-                    isModelOnline
-                      ? "text-emerald-800"
-                      : "text-amber-800"
-                  }`}
+                  className={`text-xs leading-6 ${isModelOnline
+                    ? "text-emerald-800"
+                    : "text-amber-800"
+                    }`}
                 >
                   {isModelOnline
                     ? "The configured AI model is installed and available for inference."

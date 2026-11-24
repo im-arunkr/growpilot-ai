@@ -405,11 +405,20 @@ export async function resumeAgentRun({
                 evaluationSucceeded:
                     results.evaluation?.success === true,
 
+
                 evaluationId:
                     results.evaluation?.evaluationId ?? null,
 
                 goalTargetReached:
                     results.evaluation?.targetReached ?? null,
+
+                // Persist measured goal values for Dashboard and History.
+                evaluationActual:
+                    results.evaluation?.actual ?? null,
+
+                evaluationTarget:
+                    results.evaluation?.target ?? null,
+
                 // Feedback and replanning decision
                 nextDecision: results.nextDecision,
                 replanningEvidence: results.replanningEvidence,

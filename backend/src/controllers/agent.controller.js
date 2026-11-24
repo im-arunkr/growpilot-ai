@@ -538,12 +538,16 @@ export async function generateCustomerMessageDraft(req, res, next) {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     );
 
+
     const requestSchema = z
       .object({
         businessId: uuidSchema,
         customerId: uuidSchema,
+        actionId: uuidSchema.optional(),
+        recoverApprovedMissingDraft: z.boolean().optional(),
       })
       .strict();
+
 
     const parsed = requestSchema.safeParse(req.body);
 
@@ -554,8 +558,24 @@ export async function generateCustomerMessageDraft(req, res, next) {
       });
     }
 
-    const { businessId, customerId } = parsed.data;
-
+    const {
+      businessId,
+      customerId,
+      actionId,
+      recoverApprovedMissingDraft = false,
+    } = parsed.data;''
+    // Only business owners/admins may revoke an existing approval.
+if (
+  recoverApprovedMissingDraft &&
+  !["owner", "admin"].includes(
+    String(req.business?.role ?? "").toLowerCase()
+  )
+) {
+  return res.status(403).json({
+    success: false,
+    message: "Only an owner or admin can recover an approved action",
+  });
+}
     // 1. Get verified business and customer information.
     const [business, retention] = await Promise.all([
       getBusinessById(businessId),
@@ -580,31 +600,109 @@ export async function generateCustomerMessageDraft(req, res, next) {
       });
     }
 
-    // 2. Find the latest pending approval action BEFORE AI generation.
-    const { data: pendingActions, error: lookupError } =
-      await supabase
-        .from("agent_actions")
-        .select("id, status, payload")
-        .eq("business_id", businessId)
-        .eq("customer_id", customerId)
-        .eq("action_type", "send_message")
-        .eq("status", "pending_approval")
-        .order("created_at", { ascending: false })
-        .limit(1);
 
-    if (lookupError) {
-      throw lookupError;
+    // 2. Find or explicitly recover the requested action.
+    let pendingAction;
+
+    if (recoverApprovedMissingDraft) {
+      if (!actionId) {
+        return res.status(400).json({
+          success: false,
+          message: "actionId is required for recovery",
+        });
+      }
+
+      const { data: approvedAction, error: lookupError } =
+        await supabase
+          .from("agent_actions")
+          .select("id, status, payload, executed_at")
+          .eq("id", actionId)
+          .eq("business_id", businessId)
+          .eq("customer_id", customerId)
+          .eq("action_type", "send_message")
+          .eq("channel", "simulation")
+          .eq("status", "approved")
+          .maybeSingle();
+
+      if (lookupError) throw lookupError;
+
+      if (!approvedAction || approvedAction.executed_at) {
+        return res.status(409).json({
+          success: false,
+          message: "Action is not eligible for recovery",
+        });
+      }
+
+      const existing = approvedAction.payload?.messageDraft;
+      const hasDraft =
+        (typeof existing === "string" && existing.trim().length > 0) ||
+        (typeof existing?.message === "string" &&
+          existing.message.trim().length > 0);
+
+      if (hasDraft) {
+        return res.status(409).json({
+          success: false,
+          message: "This approved action already has a draft",
+        });
+      }
+
+      // Revoke old approval before generating a new draft.
+      const { data: recovered, error: recoveryError } =
+        await supabase
+          .from("agent_actions")
+          .update({
+            status: "pending_approval",
+            approved_by: null,
+            approved_at: null,
+            payload: {
+              ...approvedAction.payload,
+              requiresApproval: true,
+              executionAllowed: false,
+              executionMode: "simulation",
+            },
+          })
+          .eq("id", actionId)
+          .eq("business_id", businessId)
+          .eq("customer_id", customerId)
+          .eq("status", "approved")
+          .is("executed_at", null)
+          .select("id, status, payload")
+          .maybeSingle();
+
+      if (recoveryError) throw recoveryError;
+
+      if (!recovered) {
+        return res.status(409).json({
+          success: false,
+          message: "Action changed before recovery",
+        });
+      }
+
+      pendingAction = recovered;
+    } else {
+      const { data: pendingActions, error: lookupError } =
+        await supabase
+          .from("agent_actions")
+          .select("id, status, payload")
+          .eq("business_id", businessId)
+          .eq("customer_id", customerId)
+          .eq("action_type", "send_message")
+          .eq("status", "pending_approval")
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+      if (lookupError) throw lookupError;
+
+      pendingAction = pendingActions?.[0];
+
+      if (!pendingAction) {
+        return res.status(404).json({
+          success: false,
+          message: "No pending approval action found",
+        });
+      }
     }
 
-    const pendingAction = pendingActions?.[0];
-
-    if (!pendingAction) {
-      return res.status(404).json({
-        success: false,
-        message:
-          "No pending approval action found for this customer",
-      });
-    }
 
     // 3. Read the existing saved draft, if any.
     const existingDraftValue =
@@ -711,11 +809,10 @@ Requirements:
 - Keep the message concise and appropriate for human review.
 - This message is a draft only.
 - Never imply that a message has already been sent.
-${
-  attempt === 2
-    ? "- The previous attempt was too similar. Use a noticeably different structure and wording."
-    : ""
-}`
+${attempt === 2
+          ? "- The previous attempt was too similar. Use a noticeably different structure and wording."
+          : ""
+        }`
         : undefined;
 
       aiResult = await routeAIRequest({
@@ -728,11 +825,11 @@ ${
           // Additional regeneration context.
           ...(isRegeneration
             ? {
-                previousDraft,
-                isRegeneration: true,
-                regenerationAttempt: attempt,
-                regenerationInstructions,
-              }
+              previousDraft,
+              isRegeneration: true,
+              regenerationAttempt: attempt,
+              regenerationInstructions,
+            }
             : {}),
         },
       });
@@ -779,7 +876,7 @@ ${
       identicalToPrevious =
         isRegeneration &&
         normalizeMessage(safeMessage) ===
-          normalizeMessage(previousDraft);
+        normalizeMessage(previousDraft);
 
       if (!identicalToPrevious) {
         break;
@@ -870,7 +967,7 @@ ${
         isRegeneration,
         draftChanged: isRegeneration
           ? normalizeMessage(safeMessage) !==
-            normalizeMessage(previousDraft)
+          normalizeMessage(previousDraft)
           : true,
 
         strategySource: guardrailTriggered

@@ -33,8 +33,8 @@ function number(value: unknown): number | null {
 function label(value: string | null): string {
   return value
     ? value
-        .replaceAll("_", " ")
-        .replace(/\b\w/g, (c) => c.toUpperCase())
+      .replaceAll("_", " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
     : "Not available";
 }
 
@@ -75,8 +75,15 @@ export function WorkerReplanningStatus({
 
   const cycleNumber = number(replanning.cycleNumber);
   const newActions = number(replanning.newActions);
-  const actual = number(evaluation.actual);
-  const target = number(evaluation.target);
+
+  const actual =
+    number(evaluation.actual) ??
+    number(source.evaluationActual);
+
+  const target =
+    number(evaluation.target) ??
+    number(source.evaluationTarget);
+
   const newTransactions =
     number(evidence.newCompletedTransactions);
 
@@ -108,9 +115,8 @@ export function WorkerReplanningStatus({
           className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 disabled:opacity-50"
         >
           <RefreshCw
-            className={`h-4 w-4 ${
-              query.isFetching ? "animate-spin" : ""
-            }`}
+            className={`h-4 w-4 ${query.isFetching ? "animate-spin" : ""
+              }`}
           />
           Refresh
         </button>

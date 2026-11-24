@@ -1,6 +1,9 @@
 
 import { Router } from "express";
-
+import {
+  getActiveBusinessGoal,
+  saveBusinessGoal,
+} from "../controllers/businessGoals.controller.js";
 import { supabase } from "../config/supabase.js";
 import { evaluateWorkerGoal } from "../controllers/goalEvaluation.controller.js";
 import { requireBusinessAccess } from "../middleware/requireBusinessAccess.js";
@@ -106,7 +109,19 @@ router.post(
   requireBusinessAccess,
   executeAgent
 );
-
+// Get the active customer retention goal for Settings.
+router.get(
+  "/goals/active",
+  requireBusinessAccess,
+  getActiveBusinessGoal
+);
+// Create a new active business goal.
+// Only owners/admins can save goals.
+router.post(
+  "/goals",
+  requireBusinessAccess,
+  saveBusinessGoal
+);
 // Fetch agent execution history.
 // Requires businessId in query.
 router.get(

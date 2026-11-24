@@ -17,6 +17,7 @@ import {
 import {
   useApprovedActions,
   useExecuteApprovedAction,
+  useGenerateMessageDraft,
 } from "@/features/approvals/hooks";
 
 import { getApiErrorMessage } from "@/lib/api/client";
@@ -72,7 +73,7 @@ export function ApprovedActionsList({
   } = useApprovedActions(businessId);
 
   const executeMutation = useExecuteApprovedAction();
-
+  const draftMutation = useGenerateMessageDraft();
   const [expandedId, setExpandedId] = useState<
     string | null
   >(null);
@@ -132,9 +133,8 @@ export function ApprovedActionsList({
           className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
         >
           <RefreshCw
-            className={`h-4 w-4 ${
-              isFetching ? "animate-spin" : ""
-            }`}
+            className={`h-4 w-4 ${isFetching ? "animate-spin" : ""
+              }`}
           />
           Refresh
         </button>
@@ -279,6 +279,46 @@ export function ApprovedActionsList({
                       </div>
                     )}
 
+                    {!savedDraft && (
+                      <button
+                        type="button"
+                        disabled={draftMutation.isPending}
+                        onClick={async () => {
+                          try {
+                            const result = await draftMutation.mutateAsync({
+                              businessId,
+                              customerId: action.customer_id,
+                              actionId: action.id,
+                              recoverApprovedMissingDraft: true,
+                            });
+
+                            if (
+                              !result.success ||
+                              !result.data?.draftPersisted ||
+                              result.data.actionId !== action.id
+                            ) {
+                              throw new Error(
+                                "Draft was not saved for this approved action."
+                              );
+                            }
+
+                            await refetch();
+
+                            toast.success(
+                              "AI draft saved. Renewed admin approval is required."
+                            );
+                          } catch (error) {
+                            toast.error(getApiErrorMessage(error));
+                          }
+                        }}
+                        className="inline-flex min-h-11 items-center rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        {draftMutation.isPending
+                          ? "Generating AI Message..."
+                          : "Generate Missing AI Message"}
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       disabled={
@@ -294,7 +334,7 @@ export function ApprovedActionsList({
                       className="inline-flex min-h-11 items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {executeMutation.isPending &&
-                      executeMutation.variables?.actionId ===
+                        executeMutation.variables?.actionId ===
                         action.id
                         ? "Executing Simulation..."
                         : "Execute Simulation"}
