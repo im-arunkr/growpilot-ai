@@ -421,6 +421,27 @@ growpilot-ai/
 9. **Consent and delivery:** No real outreach channel exists. Simulation-only execution must not be confused with consent authorization for live messaging.
 10. **Production readiness:** Database migration reproducibility, security assessment, automated tests, deployment, monitoring, failure reconciliation, real-world baselines and complete cost telemetry remain future work.
 
+## Personal Contribution and AI Assistance
+
+I developed **GrowPilot AI** using Next.js, React, Node.js, Express, Supabase, and Ollama with the Qwen 2.5 model.
+
+### My Contributions
+
+- **Requirement Analysis:** Understood the business problem and defined the customer retention goal.
+- **System Design:** Designed the application architecture and AI Agent workflow.
+- **Backend Development:** Implemented and tested APIs, business logic, and agent execution.
+- **AI Integration:** Integrated Ollama for AI-powered strategy and message generation.
+- **Testing and Debugging:** Tested APIs using Postman, identified errors, and improved the implementation.
+- **Workflow Validation:** Tested human approvals, execution recovery, goal evaluation, and autonomous replanning using synthetic data.
+
+### How I Used AI Coding Assistants
+
+I used AI coding assistants, including **Claude Code and ChatGPT**, to support code generation, debugging, and implementation.
+
+I reviewed the generated code, tested functionality, investigated errors, and refined the solution based on actual results.
+
+My focus was on **understanding the engineering decisions, validating the complete workflow, and building a reliable, working prototype**, rather than simply generating code.
+
 ## Roadmap / submission checklist
 
 - [x] Goal-driven agent runner and customer opportunity tool
